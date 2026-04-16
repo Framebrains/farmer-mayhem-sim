@@ -7,8 +7,18 @@ function mean(arr: number[]): number {
   return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
+// ALL event types that indicate a card was actively used by a player
 const PLAY_EVENT_TYPES = new Set([
-  'card_played', 'attack_declared', 'attack_hit', 'attack_missed',
+  'card_played',          // specialty cards on own turn
+  'attack_declared',      // attack initiated
+  'attack_hit',           // attack resolved (hit)
+  'attack_missed',        // attack resolved (miss)
+  'attack_noped',         // god_mode used
+  'attack_redirected',    // redirect or wrong_goat used
+  'mad_cow_triggered',    // mad cow drawn
+  'insurance_triggered',  // insurance auto-triggered
+  'sacrifice_wheel_spun', // the_sacrifice played
+  'haunted_barn_triggered',
 ]);
 
 /** Aggregate raw game results into simulation statistics */
@@ -52,7 +62,6 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
     aggressive: 0, defensive: 0, balanced: 0, random: 0,
   };
   for (const s of ['aggressive', 'defensive', 'balanced', 'random'] as Strategy[]) {
-    // Normalise: "if this strategy filled a full seat every game, how often did it win?"
     const gamesAsPlayer = strategyGameSlots[s] / config.playerCount;
     winRateByStrategy[s] = gamesAsPlayer > 0 ? winsByStrategy[s] / gamesAsPlayer : 0;
   }
@@ -61,83 +70,94 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
   const drawCount = results.filter(r => r.isDraw).length;
   const drawRate = drawCount / totalGames;
 
-  // ── Card stats ───────────────────────────────────────────
-  // All counters are PER-GAME (using Sets), not per-event.
-  // This ensures winCorrelation is always in [0, 1].
+  // ── Card stats (per-player-game approach) ────────────────
   //
-  // gamesCardPlayed[id]       = # games where card was played by anyone
-  // gamesWinnerPlayedCard[id] = # games where the winner played the card
-  // totalTimesPlayed[id]      = raw event count across all games (for avgTimesPerGame)
+  // For each (player, game) pair where the player used card X:
+  //   - playerInstances[X]++
+  //   - if that player WON: playerWins[X]++
+  //
+  // winCorrelation = playerWins[X] / playerInstances[X]
+  //   → "win rate among players who played this card"
+  //   → Expected = 1/playerCount (e.g. 33% for 3 players)
+  //   → Values 2x above expected = potentially OP
+  //
+  // This avoids the false positive where "C4-Goat appears in 99% of
+  // winning games" simply because everyone plays C4-Goat every game.
 
-  const gamesCardPlayed: Record<string, number> = {};
-  const gamesWinnerPlayedCard: Record<string, number> = {};
-  const totalTimesPlayed: Record<string, number> = {};
+  const playerInstances: Record<string, number> = {};   // (player,game) count
+  const playerWins: Record<string, number> = {};        // subset where player won
+  const totalPlays: Record<string, number> = {};        // raw event count
 
   for (const cardId of Object.keys(CARD_DATABASE)) {
-    gamesCardPlayed[cardId] = 0;
-    gamesWinnerPlayedCard[cardId] = 0;
-    totalTimesPlayed[cardId] = 0;
+    playerInstances[cardId] = 0;
+    playerWins[cardId] = 0;
+    totalPlays[cardId] = 0;
   }
 
   results.forEach(r => {
-    // Sets track unique card IDs per game (not event counts)
-    const playedThisGame = new Set<string>();
-    const winnerPlayedThisGame = new Set<string>();
+    // Collect which unique card IDs each player used this game
+    const usedByPlayer = new Map<number, Set<string>>();
+    for (const p of r.playerResults) {
+      usedByPlayer.set(p.id, new Set());
+    }
 
     r.events.forEach(e => {
       if (!e.cardId || !PLAY_EVENT_TYPES.has(e.type)) return;
-
-      totalTimesPlayed[e.cardId] = (totalTimesPlayed[e.cardId] || 0) + 1;
-      playedThisGame.add(e.cardId);
-
-      if (r.winnerId !== null && e.actorId === r.winnerId) {
-        winnerPlayedThisGame.add(e.cardId);
-      }
+      totalPlays[e.cardId] = (totalPlays[e.cardId] || 0) + 1;
+      usedByPlayer.get(e.actorId)?.add(e.cardId);
     });
 
-    for (const cardId of playedThisGame) {
-      gamesCardPlayed[cardId]++;
-    }
-    for (const cardId of winnerPlayedThisGame) {
-      gamesWinnerPlayedCard[cardId]++;
+    for (const [playerId, cards] of usedByPlayer) {
+      for (const cardId of cards) {
+        playerInstances[cardId]++;
+        if (r.winnerId === playerId) {
+          playerWins[cardId]++;
+        }
+      }
     }
   });
 
-  // Estimate timesDrawn from deck probability (for playRate display)
+  // Estimate timesDrawn for playRate (probabilistic from deck composition)
   const totalDeckSize = Object.values(CARD_DATABASE)
     .filter(c => c.type !== 'trap')
     .reduce((sum, c) => sum + c.count, 0);
   const cardsDealtPerGame = 7 * config.playerCount;
 
   const cardStats: Record<string, CardStat> = {};
+  const expectedWinRate = 1 / config.playerCount;
 
   for (const [cardId, cardDef] of Object.entries(CARD_DATABASE)) {
     if (cardDef.type === 'trap') continue;
 
-    const count = config.deckConfig.overrides[cardId] ?? cardDef.count;
+    const deckCount = config.deckConfig.overrides[cardId] ?? cardDef.count;
     const estimatedDrawn = Math.max(
-      Math.round((count / totalDeckSize) * cardsDealtPerGame * totalGames),
+      Math.round((deckCount / totalDeckSize) * cardsDealtPerGame * totalGames),
       1,
     );
-    const played = totalTimesPlayed[cardId] || 0;
-    const gamesPlayed = gamesCardPlayed[cardId] || 0;
-    const gamesWinnerPlayed = gamesWinnerPlayedCard[cardId] || 0;
 
-    // winCorrelation: "of games where this card was played by anyone,
-    // what fraction had the winner play it?"
-    // Expected value = 1 / playerCount. Values >> expected = potentially overpowered.
-    const winCorrelation = gamesPlayed > 0
-      ? gamesWinnerPlayed / gamesPlayed
+    const instances = playerInstances[cardId] || 0;
+    const wins = playerWins[cardId] || 0;
+    const plays = totalPlays[cardId] || 0;
+
+    // Actual win rate when a player used this card (0–1)
+    // Balanced card → ≈ expectedWinRate (1/playerCount)
+    // OP card → significantly higher than expectedWinRate
+    const winRateWhenPlayed = instances > 0 ? wins / instances : 0;
+
+    // Normalise for display: express as how much above/below expected
+    // 0.5 = neutral (= expectedWinRate), 1.0 = 2x expected (very strong), 0 = never wins
+    const winCorrelation = instances > 0
+      ? Math.min(winRateWhenPlayed / (expectedWinRate * 2), 1)
       : 0;
 
     cardStats[cardId] = {
       cardId,
       timesDrawn: estimatedDrawn,
-      timesPlayed: played,
-      playRate: estimatedDrawn > 0 ? played / estimatedDrawn : 0,
-      winnerHadCard: gamesWinnerPlayed,
+      timesPlayed: plays,
+      playRate: estimatedDrawn > 0 ? plays / estimatedDrawn : 0,
+      winnerHadCard: wins,
       winCorrelation,
-      avgTimesPerGame: played / totalGames,
+      avgTimesPerGame: plays / totalGames,
     };
   }
 
@@ -159,6 +179,6 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
     redFlags: [],
   };
 
-  stats.redFlags = detectRedFlags(stats);
+  stats.redFlags = detectRedFlags(stats, expectedWinRate);
   return stats;
 }

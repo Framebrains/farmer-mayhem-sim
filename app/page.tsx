@@ -9,7 +9,7 @@ import Dashboard from '@/components/Dashboard';
 const DEFAULT_CONFIG: SimConfig = {
   playerCount: 3,
   numSimulations: 1000,
-  strategies: ['aggressive', 'defensive', 'balanced'],
+  strategies: ['balanced', 'balanced', 'balanced'],
   deckConfig: { overrides: {} },
 };
 
