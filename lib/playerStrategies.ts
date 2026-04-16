@@ -100,23 +100,26 @@ const aggressive: StrategyFunctions = {
 
   chooseSpecialtyCardsThisTurn(state, playerId) {
     const player = getPlayer(state, playerId);
+    const others = aliveOthers(state, playerId);
     const cards: string[] = [];
 
     if (player.hand.includes('oppenheimer')) cards.push('oppenheimer');
-    if (player.hand.includes('steal')) cards.push('steal');
     if (player.hand.includes('polacken')) cards.push('polacken');
     if (player.hand.includes('begger')) cards.push('begger');
+    if (player.hand.includes('steal')) cards.push('steal');
     if (player.hand.includes('blottaren')) cards.push('blottaren');
     if (player.hand.includes('skinny_dipping')) cards.push('skinny_dipping');
     if (player.hand.includes('the_sacrifice')) cards.push('the_sacrifice');
-    if (player.hand.includes('moonshine_night')) cards.push('moonshine_night');
-    if (player.hand.includes('identity_theft') && player.hp <= 1) cards.push('identity_theft');
     if (player.hand.includes('haunted_barn')) cards.push('haunted_barn');
-    // Only play grandma/silvertejp at low HP
-    if (player.hp <= 1 && player.hand.includes('senile_grandma')) cards.push('senile_grandma');
+    if (player.hand.includes('identity_theft') && others.some(o => o.hp > player.hp)) cards.push('identity_theft');
+    if (player.hand.includes('moonshine_night') && others.some(o => o.hand.length >= player.hand.length + 3)) cards.push('moonshine_night');
+    if (player.hand.includes('loot_the_corpse') && state.players.some(p => p.isEliminated && p.hand.length > 0)) cards.push('loot_the_corpse');
+    if (player.hand.includes('senile_grandma') && !player.stationaryCards.some(s => s.cardId === 'senile_grandma') && (player.hp <= 1 || player.hand.length > 6)) {
+      cards.push('senile_grandma');
+    }
     if (player.hp <= 1 && player.hand.includes('silvertejp')) cards.push('silvertejp');
 
-    return cards;
+    return [...new Set(cards)];
   },
 
   chooseTargetForCard(state, playerId, cardId) {
@@ -215,17 +218,25 @@ const defensive: StrategyFunctions = {
 
   chooseSpecialtyCardsThisTurn(state, playerId) {
     const player = getPlayer(state, playerId);
+    const others = aliveOthers(state, playerId);
     const cards: string[] = [];
 
-    // Play defensive cards immediately
+    if (player.hand.includes('polacken')) cards.push('polacken');
     if (player.hand.includes('senile_grandma') && !player.stationaryCards.some(s => s.cardId === 'senile_grandma')) {
       cards.push('senile_grandma');
     }
     if (player.hp <= 1 && player.hand.includes('silvertejp')) cards.push('silvertejp');
-    if (player.hand.includes('polacken')) cards.push('polacken');
     if (player.hand.includes('haunted_barn')) cards.push('haunted_barn');
+    if (player.hand.includes('begger')) cards.push('begger');
+    if (player.hand.includes('steal')) cards.push('steal');
+    if (player.hand.includes('loot_the_corpse') && state.players.some(p => p.isEliminated && p.hand.length > 0)) cards.push('loot_the_corpse');
+    if (player.hand.includes('blottaren')) cards.push('blottaren');
+    if (player.hand.includes('skinny_dipping')) cards.push('skinny_dipping');
+    if (player.hp === 2 && player.hand.includes('the_sacrifice')) cards.push('the_sacrifice');
+    if (player.hp === 1 && player.hand.includes('identity_theft') && others.some(o => o.hp === 2)) cards.push('identity_theft');
+    if (player.hand.includes('moonshine_night') && others.some(o => o.hand.length >= player.hand.length + 4)) cards.push('moonshine_night');
 
-    return cards;
+    return [...new Set(cards)];
   },
 
   chooseTargetForCard(state, playerId, cardId) {
@@ -427,7 +438,7 @@ const randomStrategy: StrategyFunctions = {
       const def = CARD_DATABASE[c];
       return def && def.timing === 'own_turn' && def.type !== 'attack';
     });
-    return ownTurnCards.filter(() => Math.random() < 0.5);
+    return ownTurnCards.filter(() => Math.random() < 0.6);
   },
 
   chooseTargetForCard(state, playerId) {

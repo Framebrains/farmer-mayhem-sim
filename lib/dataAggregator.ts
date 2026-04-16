@@ -180,5 +180,6 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
   };
 
   stats.redFlags = detectRedFlags(stats, expectedWinRate);
+  stats.sampleGame = results[0];
   return stats;
 }

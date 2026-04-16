@@ -68,6 +68,8 @@ export function detectRedFlags(stats: SimulationStats, expectedWinRate: number):
   for (const [id, card] of Object.entries(stats.cardStats)) {
     const def = CARD_DATABASE[id];
     if (!def || def.type === 'trap' || def.timing === 'automatic' || def.timing === 'any_time') continue;
+    if (stats.totalGames < 500) continue;
+    if (card.timesPlayed < 5) continue;
     if (card.timesDrawn < stats.totalGames * 0.1) continue;
     if (card.playRate < 0.2 && card.timesDrawn > 0) {
       const name = def.name;

@@ -142,6 +142,8 @@ export interface SimulationStats {
   cardStats: Record<string, CardStat>;
 
   redFlags: RedFlag[];
+
+  sampleGame?: SingleGameResult;
 }
 
 export interface CardStat {
