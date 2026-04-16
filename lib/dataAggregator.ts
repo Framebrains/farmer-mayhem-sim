@@ -180,6 +180,8 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
   };
 
   stats.redFlags = detectRedFlags(stats, expectedWinRate);
-  stats.sampleGame = results[0];
+  // Pick a game near the median length for a representative sample
+  const sorted = [...results].sort((a, b) => a.turnsPlayed - b.turnsPlayed);
+  stats.sampleGame = sorted[Math.floor(sorted.length / 2)];
   return stats;
 }

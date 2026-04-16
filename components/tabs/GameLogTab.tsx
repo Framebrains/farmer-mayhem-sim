@@ -16,163 +16,300 @@ function cardName(cardId: string): string {
 
 function playerLabel(game: SingleGameResult, playerId: number): string {
   const result = game.playerResults.find(p => p.id === playerId);
-  if (!result) return `Spelare ${playerId + 1}`;
-  const stratLabel = STRATEGY_LABELS[result.strategy] ?? result.strategy;
-  return `Spelare ${playerId + 1} (${stratLabel})`;
+  const strat = result ? STRATEGY_LABELS[result.strategy] ?? result.strategy : '?';
+  return `Spelare ${playerId + 1} (${strat})`;
 }
 
-function formatEvent(event: GameEvent, game: SingleGameResult): string | null {
+// Short name for inline use in sentences
+function pName(game: SingleGameResult, playerId: number): string {
+  return `Sp.${playerId + 1}`;
+}
+
+/** Format a single event as a Swedish sentence. Returns null to skip. */
+function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; color: string } | null {
   const actor = playerLabel(game, event.actorId);
+  const actorShort = pName(game, event.actorId);
   const target = event.targetId !== undefined ? playerLabel(game, event.targetId) : '';
 
   switch (event.type) {
+
     case 'attack_declared':
-      return `⚔️ ${actor} spelade **${cardName(event.cardId ?? '')}** mot ${target}`;
+      return {
+        text: `⚔️  ${actor} spelade **${cardName(event.cardId ?? '')}** mot ${target}`,
+        color: 'text-yellow-300',
+      };
+
     case 'attack_hit':
-      return `🎲 [${event.diceRoll ?? '?'}] — TRÄFF! ${target} tar 1 HP i skada`;
+      return {
+        text: `🎲  Tärning: ${event.diceRoll} — TRÄFF! ${target} tar 1 HP i skada`,
+        color: 'text-red-400',
+      };
+
     case 'attack_missed':
-      return `🎲 [${event.diceRoll ?? '?'}] — Miss!`;
+      return {
+        text: `🎲  Tärning: ${event.diceRoll} — Miss, ingen skada`,
+        color: 'text-zinc-400',
+      };
+
     case 'attack_noped':
-      return `🛡️ ${actor} spelade **God Mode** — blockerar!`;
-    case 'attack_redirected':
-      return `↩️ ${actor} omdirigerade attacken`;
+      return {
+        text: `🛡️  ${actor} spelade **God Mode** och blockerar attacken!`,
+        color: 'text-blue-400',
+      };
+
+    case 'attack_redirected': {
+      const newTarget = event.targetId !== undefined ? playerLabel(game, event.targetId) : '?';
+      const cardUsed = event.cardId ? ` (**${cardName(event.cardId)}**)` : '';
+      return {
+        text: `↩️  ${actor} omdirigerar attacken → ${newTarget}${cardUsed}`,
+        color: 'text-purple-400',
+      };
+    }
+
     case 'player_damaged':
-      return null; // skip, shown via attack_hit
+      return null; // already shown via attack_hit
+
     case 'player_eliminated':
-      return `☠️ ${actor} eliminerad!`;
+      return {
+        text: `☠️  ${actor} är eliminerad!`,
+        color: 'text-red-500',
+      };
+
     case 'insurance_triggered':
-      return `🏥 ${actor}s **Insurance** aktiverades — HP tillbaka till 2!`;
+      return {
+        text: `🏥  ${actor}s **Insurance** aktiveras automatiskt — HP återställt till 2!`,
+        color: 'text-emerald-400',
+      };
+
     case 'mad_cow_triggered':
-      return `🐄 ${actor} drog **Mad Cow**! Tärning: [${event.diceRoll ?? '?'}]`;
-    case 'card_played':
-      if (!event.cardId) return null;
-      return `🃏 ${actor} spelade **${cardName(event.cardId)}**`;
-    case 'sacrifice_wheel_spun':
-      return `🎡 Hjulet stannade på: ${event.detail ?? '?'}`;
+      return {
+        text: `🐄  ${actor} drog **Mad Cow**! Tärning: ${event.diceRoll}${event.diceRoll && event.diceRoll % 2 !== 0 ? ' — ojämnt, tar 1 HP skada' : ' — jämnt, säker!'}`,
+        color: 'text-orange-400',
+      };
+
     case 'haunted_barn_triggered':
-      return `👻 **Haunted Barn** aktiveras — ${actor} tar skada`;
+      return {
+        text: `👻  **Haunted Barn** aktiveras på ${actor}s gård (< 2 kort på hand) — tar 1 HP skada`,
+        color: 'text-red-400',
+      };
+
+    case 'sacrifice_wheel_spun':
+      return {
+        text: `🎡  ${actor} spelade **The Sacrifice** — hjulet stannade på: **${event.detail ?? '?'}**`,
+        color: 'text-pink-400',
+      };
+
+    case 'card_played': {
+      if (!event.cardId) return null;
+      const cid = event.cardId;
+
+      switch (cid) {
+        case 'haunted_barn':
+          return {
+            text: `👻  ${actor} placerar **Haunted Barn** på ${target}s gård`,
+            color: 'text-purple-300',
+          };
+        case 'senile_grandma':
+          return {
+            text: `👵  ${actor} placerar **Senile Grandma** på sin egen gård (absorberar nästa attack)`,
+            color: 'text-green-400',
+          };
+        case 'steal':
+          return {
+            text: `🤚  ${actor} stjäl 2 slumpmässiga kort från ${target}`,
+            color: 'text-orange-300',
+          };
+        case 'identity_theft':
+          return {
+            text: `🔄  ${actor} byter HP och stationary-kort med ${target} (**Identity Theft**)`,
+            color: 'text-indigo-400',
+          };
+        case 'moonshine_night':
+          return {
+            text: `🌙  ${actor} byter hela handen med ${target} (**Moonshine Night**)`,
+            color: 'text-indigo-300',
+          };
+        case 'skinny_dipping':
+          return {
+            text: `🎲  ${actor} utmanar ${target} i tärningsduel (**Skinny Dipping**) — vinnaren drar 2 kort`,
+            color: 'text-cyan-400',
+          };
+        case 'polacken':
+          return {
+            text: `🃏  ${actor} spelar **Polacken** och drar 3 kort`,
+            color: 'text-teal-400',
+          };
+        case 'begger':
+          return {
+            text: `🙏  ${actor} spelar **Begger** — varje motspelare ger bort ett kort`,
+            color: 'text-teal-300',
+          };
+        case 'silvertejp':
+          return {
+            text: `🩹  ${actor} spelar **Silvertejp** och läker till 2 HP`,
+            color: 'text-green-400',
+          };
+        case 'loot_the_corpse':
+          return {
+            text: `💀  ${actor} plundrar ${target}s hand med **Loot the Corpse**`,
+            color: 'text-orange-400',
+          };
+        case 'oppenheimer':
+          return {
+            text: `☢️  ${actor} spelar **Oppenheimer** — stjäl alla C4-Goat från motståndarna`,
+            color: 'text-red-300',
+          };
+        case 'blottaren':
+          return {
+            text: `👁️  ${actor} spelar **Blottaren** — ${target}s hand exponeras`,
+            color: 'text-zinc-300',
+          };
+        case 'stop_it':
+          return {
+            text: `✋  ${actor} spelar **Stop It** — ${target}s tur avbryts!`,
+            color: 'text-yellow-400',
+          };
+        case 'god_mode':
+          return null; // shown via attack_noped
+        default:
+          return {
+            text: `🃏  ${actor} spelar **${cardName(cid)}**`,
+            color: 'text-zinc-300',
+          };
+      }
+    }
+
     case 'game_over':
-      return null; // shown at top summary
     case 'draw':
       return null;
+
     default:
       return null;
   }
 }
 
-function renderEventText(text: string): React.ReactNode {
-  // Bold text between **...**
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={i} className="text-white font-semibold">{part.slice(2, -2)}</strong>;
-    }
-    return <span key={i}>{part}</span>;
-  });
+function bold(text: string): React.ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    part.startsWith('**') && part.endsWith('**')
+      ? <strong key={i} className="font-semibold text-white">{part.slice(2, -2)}</strong>
+      : <span key={i}>{part}</span>
+  );
 }
 
-interface TurnGroup {
-  turn: number;
+interface PlayerTurnGroup {
+  turnNumber: number;
   actorId: number;
   events: GameEvent[];
 }
 
-function groupByTurn(events: GameEvent[], game: SingleGameResult): TurnGroup[] {
-  const map = new Map<number, TurnGroup>();
-  for (const event of events) {
-    if (!map.has(event.turn)) {
-      map.set(event.turn, { turn: event.turn, actorId: event.actorId, events: [] });
+interface RoundGroup {
+  round: number;
+  turns: PlayerTurnGroup[];
+}
+
+function buildRounds(game: SingleGameResult): RoundGroup[] {
+  // Group events by player turn first
+  const turnMap = new Map<number, PlayerTurnGroup>();
+  for (const event of game.events) {
+    if (!turnMap.has(event.turn)) {
+      turnMap.set(event.turn, { turnNumber: event.turn, actorId: event.actorId, events: [] });
     }
-    map.get(event.turn)!.events.push(event);
+    turnMap.get(event.turn)!.events.push(event);
   }
-  return Array.from(map.values()).sort((a, b) => a.turn - b.turn);
+
+  const turns = Array.from(turnMap.values()).sort((a, b) => a.turnNumber - b.turnNumber);
+
+  // Group turns into rounds: round N = ceil(turnNumber / playerCount)
+  const roundMap = new Map<number, RoundGroup>();
+  for (const turn of turns) {
+    const round = Math.ceil(turn.turnNumber / game.playerCount);
+    if (!roundMap.has(round)) {
+      roundMap.set(round, { round, turns: [] });
+    }
+    roundMap.get(round)!.turns.push(turn);
+  }
+
+  return Array.from(roundMap.values()).sort((a, b) => a.round - b.round);
+}
+
+function PlayerTurn({ turn, game }: { turn: PlayerTurnGroup; game: SingleGameResult }) {
+  const label = playerLabel(game, turn.actorId);
+  const formatted = turn.events
+    .map(e => formatEvent(e, game))
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+
+  if (formatted.length === 0) return null;
+
+  return (
+    <div className="pl-4 border-l-2 border-zinc-700 space-y-1.5 py-2">
+      <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">{label}s tur</p>
+      {formatted.map((item, i) => (
+        <p key={i} className={`text-sm leading-snug ${item.color}`}>
+          {bold(item.text)}
+        </p>
+      ))}
+    </div>
+  );
 }
 
 function GameLog({ game }: { game: SingleGameResult }) {
+  const rounds = buildRounds(game);
   const winnerText = game.isDraw
     ? 'Oavgjort'
     : game.winnerId !== null
     ? playerLabel(game, game.winnerId)
     : 'Okänd vinnare';
 
-  const turns = groupByTurn(game.events, game);
-
   return (
     <div className="space-y-4">
-      {/* Summary header */}
-      <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-4">
-        <p className="text-sm font-semibold text-zinc-200">
-          Spel slutade på runda{' '}
-          <span className="text-emerald-400">{game.turnsPlayed}</span> —{' '}
-          <span className={game.isDraw ? 'text-yellow-400' : 'text-emerald-400'}>{winnerText}</span>
-        </p>
+      {/* Summary */}
+      <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-4 flex flex-wrap gap-4 text-sm">
+        <div>
+          <span className="text-zinc-400">Vinnare: </span>
+          <span className={game.isDraw ? 'text-yellow-400 font-semibold' : 'text-emerald-400 font-semibold'}>{winnerText}</span>
+        </div>
+        <div>
+          <span className="text-zinc-400">Rundor: </span>
+          <span className="text-white font-semibold">{rounds.length}</span>
+          <span className="text-zinc-500 text-xs ml-1">({game.playerCount} spelare)</span>
+        </div>
       </div>
 
-      {/* Turn-by-turn log */}
-      <div
-        className="bg-zinc-900 border border-zinc-700 rounded-xl overflow-y-auto"
-        style={{ maxHeight: '520px' }}
-      >
-        {turns.map(group => {
-          const actorLabel = playerLabel(game, group.actorId);
-          const renderedEvents = group.events
-            .map(e => formatEvent(e, game))
-            .filter((t): t is string => t !== null);
-
-          if (renderedEvents.length === 0) return null;
-
-          return (
-            <div key={group.turn} className="border-b border-zinc-800 last:border-b-0">
-              {/* Turn header */}
-              <div className="px-4 py-2 bg-zinc-800/60 sticky top-0">
-                <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wide">
-                  Runda {group.turn} — {actorLabel}s tur
-                </span>
-              </div>
-              {/* Events */}
-              <ul className="px-4 py-2 space-y-1">
-                {renderedEvents.map((text, i) => {
-                  const isEliminated = text.startsWith('☠️');
-                  const isHit = text.startsWith('🎲') && text.includes('TRÄFF');
-                  const isInsurance = text.startsWith('🏥');
-                  return (
-                    <li
-                      key={i}
-                      className={`text-sm leading-snug ${
-                        isEliminated
-                          ? 'text-red-400'
-                          : isHit
-                          ? 'text-orange-400'
-                          : isInsurance
-                          ? 'text-green-400'
-                          : 'text-zinc-300'
-                      }`}
-                    >
-                      {renderEventText(text)}
-                    </li>
-                  );
-                })}
-              </ul>
+      {/* Round-by-round log */}
+      <div className="bg-zinc-900 border border-zinc-700 rounded-xl overflow-y-auto" style={{ maxHeight: '580px' }}>
+        {rounds.map(round => (
+          <div key={round.round} className="border-b border-zinc-800 last:border-b-0">
+            {/* Round header */}
+            <div className="px-4 py-2.5 bg-zinc-800/80 sticky top-0 z-10">
+              <span className="text-sm font-bold text-zinc-200">Runda {round.round}</span>
             </div>
-          );
-        })}
+            {/* Player turns within round */}
+            <div className="px-4 py-2 space-y-3">
+              {round.turns.map(turn => (
+                <PlayerTurn key={turn.turnNumber} turn={turn} game={game} />
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
 
-      {/* Final HP summary */}
+      {/* Final HP */}
       <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-4">
         <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-3">Slutresultat</h4>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {game.playerResults.map(p => (
             <div
               key={p.id}
-              className={`rounded-lg p-3 text-center ${
+              className={`rounded-lg p-3 text-center border ${
                 p.id === game.winnerId
-                  ? 'bg-emerald-900/40 border border-emerald-700'
-                  : 'bg-zinc-700/40 border border-zinc-600'
+                  ? 'bg-emerald-900/40 border-emerald-700'
+                  : 'bg-zinc-700/30 border-zinc-600'
               }`}
             >
               <p className="text-xs text-zinc-400 mb-1">{playerLabel(game, p.id)}</p>
-              <p className={`text-lg font-bold ${p.id === game.winnerId ? 'text-emerald-400' : p.finalHp <= 0 ? 'text-red-400' : 'text-white'}`}>
+              <p className={`text-xl font-bold ${
+                p.id === game.winnerId ? 'text-emerald-400' : p.finalHp <= 0 ? 'text-red-400' : 'text-white'
+              }`}>
                 {p.finalHp} HP
               </p>
               <p className="text-xs text-zinc-500 mt-1">{p.cardsPlayed} kort spelade</p>
@@ -196,10 +333,8 @@ export default function GameLogTab({ stats }: { stats: SimulationStats }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-zinc-300">
-          Spellog — Spel #1 av {stats.totalGames.toLocaleString()}
-        </h2>
-        <span className="text-xs text-zinc-500">Visar det första simulerade spelet</span>
+        <h2 className="text-sm font-semibold text-zinc-300">Spellog — Exempelspel</h2>
+        <span className="text-xs text-zinc-500">Visar ett slumpmässigt valt spel ur simuleringen</span>
       </div>
       <GameLog game={stats.sampleGame} />
     </div>

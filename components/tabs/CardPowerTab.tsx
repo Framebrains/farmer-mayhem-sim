@@ -20,10 +20,12 @@ export default function CardPowerTab({ stats }: { stats: SimulationStats }) {
 
   const expectedWinRate = 1 / stats.playerCount;
 
-  const sorted = Object.values(stats.cardStats)
-    .filter(c => {
-      const def = CARD_DATABASE[c.cardId];
-      return def && def.type !== 'trap';
+  // Include ALL non-trap cards that have a definition, even if never played
+  const allCards = Object.values(CARD_DATABASE).filter(def => def.type !== 'trap');
+  const sorted = allCards
+    .map(def => stats.cardStats[def.id] ?? {
+      cardId: def.id, timesDrawn: 0, timesPlayed: 0, playRate: 0,
+      winnerHadCard: 0, winCorrelation: 0, avgTimesPerGame: 0,
     })
     .sort((a, b) => b.winCorrelation - a.winCorrelation);
 

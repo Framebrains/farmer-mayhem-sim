@@ -307,16 +307,15 @@ export function runTurn(state: GameState): GameState {
 function resolveAttackChain(state: GameState): GameState {
   if (!state.pendingAttack) return state;
 
-  let changed = true;
-  let iterations = 0;
+  // Each iteration handles ONE reaction (redirect/wrong_goat changes target → re-evaluate).
+  // God Mode resolution terminates immediately to prevent chain loops.
+  const MAX_REDIRECTS = 6;
+  let redirectCount = 0;
 
-  while (changed && iterations < 20 && !state.isOver) {
-    changed = false;
-    iterations++;
-    const attack = state.pendingAttack!;
-    if (!attack) break;
+  while (state.pendingAttack && !state.isOver && redirectCount < MAX_REDIRECTS) {
+    const attack = state.pendingAttack;
 
-    // Get reaction order: target first, then clockwise, attacker last
+    // Build reaction order: target first, clockwise (excl. attacker), attacker last
     const alive = alivePlayers(state);
     const targetIdx = alive.findIndex(p => p.id === attack.targetId);
     const ordered: PlayerState[] = [];
@@ -326,56 +325,57 @@ function resolveAttackChain(state: GameState): GameState {
         if (p.id !== attack.attackerId) ordered.push(p);
       }
     }
-    // Attacker reacts last
     const attacker = alive.find(p => p.id === attack.attackerId);
     if (attacker) ordered.push(attacker);
+
+    let reacted = false;
 
     for (const reactor of ordered) {
       if (state.isOver || !state.pendingAttack) break;
       const strategy = getStrategy(reactor.strategy);
-      const currentAttack = state.pendingAttack!;
+      const currentAttack = state.pendingAttack;
 
-      // Check redirect
+      // Only the current target can redirect or wrong-goat
       if (currentAttack.targetId === reactor.id) {
         const redirect = strategy.shouldRedirect(state, reactor.id, currentAttack);
         if (redirect.play && redirect.newTargetId >= 0) {
           state = applyRedirect(state, reactor.id, redirect.newTargetId);
-          changed = true;
-          break;
+          redirectCount++;
+          reacted = true;
+          break; // restart with new target
         }
 
-        // Check Wrong Goat
         if (strategy.shouldPlayWrongGoat(state, reactor.id, currentAttack)) {
           state = applyWrongGoat(state, reactor.id, currentAttack.attackerId, currentAttack.targetId);
-          changed = true;
+          redirectCount++;
+          reacted = true;
           break;
         }
       }
 
-      // Check God Mode
+      // Any player can God Mode — but only ONE nope attempt per chain pass
       if (strategy.shouldPlayGodMode(state, reactor.id, currentAttack)) {
         state = applyGodMode(state, reactor.id);
 
-        // Check counter-nope chain
-        const counterPlayer = currentAttack.attackerId === reactor.id
-          ? state.players.find(p => p.id === currentAttack.targetId)
-          : state.players.find(p => p.id === currentAttack.attackerId);
-
-        if (counterPlayer && !counterPlayer.isEliminated) {
-          const counterStrategy = getStrategy(counterPlayer.strategy);
-          if (counterStrategy.shouldPlayGodMode(state, counterPlayer.id, currentAttack)) {
-            // Counter-nope: the God Mode is cancelled, attack continues
-            state = applyGodMode(state, counterPlayer.id);
-            changed = true;
-            break;
+        // Only the attacker can counter-nope (one counter allowed)
+        const attackerPlayer = state.players.find(p => p.id === currentAttack.attackerId && !p.isEliminated);
+        if (attackerPlayer && reactor.id !== currentAttack.attackerId) {
+          const attackerStrategy = getStrategy(attackerPlayer.strategy);
+          if (attackerStrategy.shouldPlayGodMode(state, attackerPlayer.id, currentAttack)) {
+            state = applyGodMode(state, attackerPlayer.id);
+            // Counter-nope cancels the God Mode → attack proceeds, chain ends
+            return state;
           }
         }
 
-        // Attack is noped
+        // God Mode succeeded — attack is noped, chain ends
         state = { ...state, pendingAttack: null };
         return state;
       }
     }
+
+    // No reactions this pass → proceed to attack resolution
+    if (!reacted) break;
   }
 
   return state;
