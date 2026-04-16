@@ -49,10 +49,13 @@ export default function CardPowerTab({ stats }: { stats: SimulationStats }) {
       </div>
 
       <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-zinc-300 mb-4">Win-korrelation per kort (klicka för detaljer)</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-semibold text-zinc-300">Win-korrelation per kort (klicka för detaljer)</h3>
+          <span className="text-xs text-zinc-500">Förväntat: {(100 / stats.playerCount).toFixed(0)}% per kort</span>
+        </div>
         <ResponsiveContainer width="100%" height={Math.max(300, chartData.length * 22)}>
           <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 60, bottom: 4, left: 120 }}>
-            <XAxis type="number" tick={{ fill: '#a1a1aa', fontSize: 11 }} axisLine={false} tickLine={false} unit="%" domain={[0, 100]} />
+            <XAxis type="number" tick={{ fill: '#a1a1aa', fontSize: 11 }} axisLine={false} tickLine={false} unit="%" domain={[0, 100]} allowDataOverflow={false} />
             <YAxis
               type="category"
               dataKey="name"

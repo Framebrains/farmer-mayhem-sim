@@ -2,24 +2,27 @@ import { SingleGameResult, SimConfig, SimulationStats, CardStat, Strategy } from
 import { CARD_DATABASE } from './cardDatabase';
 import { detectRedFlags } from './redFlagDetector';
 
-/** Calculate mean of an array of numbers */
 function mean(arr: number[]): number {
   if (arr.length === 0) return 0;
   return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
+const PLAY_EVENT_TYPES = new Set([
+  'card_played', 'attack_declared', 'attack_hit', 'attack_missed',
+]);
+
 /** Aggregate raw game results into simulation statistics */
 export function aggregateResults(results: SingleGameResult[], config: SimConfig): SimulationStats {
   const totalGames = results.length;
 
-  // Game length stats
+  // ── Game length ──────────────────────────────────────────
   const turns = results.map(r => r.turnsPlayed);
   const avgTurns = mean(turns);
   const minTurns = Math.min(...turns);
   const maxTurns = Math.max(...turns);
   const avgMinutes = avgTurns * (35 / 60);
 
-  // Wins by position
+  // ── Wins by position ─────────────────────────────────────
   const winsByPosition = Array(config.playerCount).fill(0) as number[];
   results.forEach(r => {
     if (r.winnerId !== null) {
@@ -29,18 +32,16 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
   });
   const winRateByPosition = winsByPosition.map(w => w / totalGames);
 
-  // Wins by strategy
+  // ── Wins by strategy ─────────────────────────────────────
   const winsByStrategy: Record<Strategy, number> = {
     aggressive: 0, defensive: 0, balanced: 0, random: 0,
   };
-  const strategyAppearances: Record<Strategy, number> = {
+  const strategyGameSlots: Record<Strategy, number> = {
     aggressive: 0, defensive: 0, balanced: 0, random: 0,
   };
 
   results.forEach(r => {
-    r.playerResults.forEach(p => {
-      strategyAppearances[p.strategy]++;
-    });
+    r.playerResults.forEach(p => { strategyGameSlots[p.strategy]++; });
     if (r.winnerId !== null) {
       const winner = r.playerResults.find(p => p.id === r.winnerId);
       if (winner) winsByStrategy[winner.strategy]++;
@@ -51,98 +52,91 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
     aggressive: 0, defensive: 0, balanced: 0, random: 0,
   };
   for (const s of ['aggressive', 'defensive', 'balanced', 'random'] as Strategy[]) {
-    winRateByStrategy[s] = strategyAppearances[s] > 0
-      ? winsByStrategy[s] / (strategyAppearances[s] / config.playerCount)
-      : 0;
+    // Normalise: "if this strategy filled a full seat every game, how often did it win?"
+    const gamesAsPlayer = strategyGameSlots[s] / config.playerCount;
+    winRateByStrategy[s] = gamesAsPlayer > 0 ? winsByStrategy[s] / gamesAsPlayer : 0;
   }
 
-  // Draw stats
+  // ── Draws ────────────────────────────────────────────────
   const drawCount = results.filter(r => r.isDraw).length;
   const drawRate = drawCount / totalGames;
 
-  // Card stats
-  const cardStats: Record<string, CardStat> = {};
+  // ── Card stats ───────────────────────────────────────────
+  // All counters are PER-GAME (using Sets), not per-event.
+  // This ensures winCorrelation is always in [0, 1].
+  //
+  // gamesCardPlayed[id]       = # games where card was played by anyone
+  // gamesWinnerPlayedCard[id] = # games where the winner played the card
+  // totalTimesPlayed[id]      = raw event count across all games (for avgTimesPerGame)
 
-  // Track card appearances across all games
-  const cardDrawnCount: Record<string, number> = {};
-  const cardPlayedCount: Record<string, number> = {};
-  const cardWinnerHadCount: Record<string, number> = {};
-  const cardGamesAppeared: Record<string, number> = {};
+  const gamesCardPlayed: Record<string, number> = {};
+  const gamesWinnerPlayedCard: Record<string, number> = {};
+  const totalTimesPlayed: Record<string, number> = {};
 
-  // Initialize all cards
   for (const cardId of Object.keys(CARD_DATABASE)) {
-    cardDrawnCount[cardId] = 0;
-    cardPlayedCount[cardId] = 0;
-    cardWinnerHadCount[cardId] = 0;
-    cardGamesAppeared[cardId] = 0;
+    gamesCardPlayed[cardId] = 0;
+    gamesWinnerPlayedCard[cardId] = 0;
+    totalTimesPlayed[cardId] = 0;
   }
 
   results.forEach(r => {
-    // Count cards played from events
-    const playedThisGame: Record<string, number> = {};
-    const drawnThisGame = new Set<string>();
+    // Sets track unique card IDs per game (not event counts)
+    const playedThisGame = new Set<string>();
+    const winnerPlayedThisGame = new Set<string>();
 
     r.events.forEach(e => {
-      if (e.cardId) {
-        if (e.type === 'card_played' || e.type === 'attack_declared' || e.type === 'attack_hit' || e.type === 'attack_missed') {
-          playedThisGame[e.cardId] = (playedThisGame[e.cardId] || 0) + 1;
-          cardPlayedCount[e.cardId] = (cardPlayedCount[e.cardId] || 0) + 1;
-        }
+      if (!e.cardId || !PLAY_EVENT_TYPES.has(e.type)) return;
+
+      totalTimesPlayed[e.cardId] = (totalTimesPlayed[e.cardId] || 0) + 1;
+      playedThisGame.add(e.cardId);
+
+      if (r.winnerId !== null && e.actorId === r.winnerId) {
+        winnerPlayedThisGame.add(e.cardId);
       }
     });
 
-    // Estimate cards drawn from player results
-    r.playerResults.forEach(p => {
-      // Cards played = cards that were in hand at some point
-      // Approximate: each player drew 7 initial + some from deck
-    });
-
-    // Track what the winner had
-    if (r.winnerId !== null) {
-      const winner = r.playerResults.find(p => p.id === r.winnerId);
-      if (winner) {
-        // The winner played these cards
-        r.events.forEach(e => {
-          if (e.cardId && e.actorId === r.winnerId) {
-            if (e.type === 'card_played' || e.type === 'attack_declared') {
-              cardWinnerHadCount[e.cardId] = (cardWinnerHadCount[e.cardId] || 0) + 1;
-            }
-          }
-        });
-      }
+    for (const cardId of playedThisGame) {
+      gamesCardPlayed[cardId]++;
     }
-
-    // Count unique card appearances per game
-    for (const cardId of Object.keys(playedThisGame)) {
-      cardGamesAppeared[cardId] = (cardGamesAppeared[cardId] || 0) + 1;
+    for (const cardId of winnerPlayedThisGame) {
+      gamesWinnerPlayedCard[cardId]++;
     }
   });
 
-  // Estimate drawn count (each game deals 7 * playerCount cards initially)
+  // Estimate timesDrawn from deck probability (for playRate display)
+  const totalDeckSize = Object.values(CARD_DATABASE)
+    .filter(c => c.type !== 'trap')
+    .reduce((sum, c) => sum + c.count, 0);
   const cardsDealtPerGame = 7 * config.playerCount;
-  for (const cardId of Object.keys(CARD_DATABASE)) {
-    const card = CARD_DATABASE[cardId];
-    if (card.type === 'trap') continue;
-    // Probability of being dealt = count / total deck size
-    const totalDeckSize = Object.values(CARD_DATABASE)
-      .filter(c => c.type !== 'trap')
-      .reduce((sum, c) => sum + c.count, 0);
-    const drawProbPerCard = card.count / totalDeckSize;
-    cardDrawnCount[cardId] = Math.round(drawProbPerCard * cardsDealtPerGame * totalGames);
-  }
 
-  for (const cardId of Object.keys(CARD_DATABASE)) {
-    const drawn = Math.max(cardDrawnCount[cardId] || 0, 1);
-    const played = cardPlayedCount[cardId] || 0;
-    const winnerHad = cardWinnerHadCount[cardId] || 0;
+  const cardStats: Record<string, CardStat> = {};
+
+  for (const [cardId, cardDef] of Object.entries(CARD_DATABASE)) {
+    if (cardDef.type === 'trap') continue;
+
+    const count = config.deckConfig.overrides[cardId] ?? cardDef.count;
+    const estimatedDrawn = Math.max(
+      Math.round((count / totalDeckSize) * cardsDealtPerGame * totalGames),
+      1,
+    );
+    const played = totalTimesPlayed[cardId] || 0;
+    const gamesPlayed = gamesCardPlayed[cardId] || 0;
+    const gamesWinnerPlayed = gamesWinnerPlayedCard[cardId] || 0;
+
+    // winCorrelation: "of games where this card was played by anyone,
+    // what fraction had the winner play it?"
+    // Expected value = 1 / playerCount. Values >> expected = potentially overpowered.
+    const winCorrelation = gamesPlayed > 0
+      ? gamesWinnerPlayed / gamesPlayed
+      : 0;
 
     cardStats[cardId] = {
       cardId,
-      timesDrawn: drawn,
+      timesDrawn: estimatedDrawn,
       timesPlayed: played,
-      playRate: played / drawn,
-      winnerHadCard: winnerHad,
-      winCorrelation: winnerHad / Math.max(cardGamesAppeared[cardId] || 1, 1),
+      playRate: estimatedDrawn > 0 ? played / estimatedDrawn : 0,
+      winnerHadCard: gamesWinnerPlayed,
+      winCorrelation,
       avgTimesPerGame: played / totalGames,
     };
   }
@@ -166,6 +160,5 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
   };
 
   stats.redFlags = detectRedFlags(stats);
-
   return stats;
 }
