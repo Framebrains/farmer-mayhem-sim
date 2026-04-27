@@ -177,6 +177,75 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
     };
   }
 
+  // ── Killing blow & draw cause analysis ─────────────────────
+  //
+  // For each game we scan backwards from the last player_eliminated event
+  // to find what caused the decisive elimination:
+  //   attack_hit       → the attack card (c4_goat, milking_cow, unicorn)
+  //   mad_cow_triggered (with diceRoll) → mad_cow
+  //   haunted_barn_triggered            → haunted_barn
+  //   sacrifice_wheel_spun (nuke)       → the_sacrifice
+  //   you_die segment                   → the_sacrifice
+  //
+  // Draws are split into:
+  //   nuke    – all players eliminated by sacrifice/nuke in the same game
+  //   timeout – game hit the MAX_TURNS cap
+
+  const killingBlowCounts: Record<string, number> = {};
+  let drawTimeout = 0;
+  let drawNuke = 0;
+
+  for (const result of results) {
+    if (result.isDraw) {
+      const hasNuke = result.events.some(
+        e => e.type === 'sacrifice_wheel_spun' && e.detail === 'nuke'
+      );
+      if (hasNuke) drawNuke++;
+      else drawTimeout++;
+      continue;
+    }
+
+    if (result.winnerId === null) continue;
+
+    // Find the last player_eliminated event index
+    let lastElimIdx = -1;
+    for (let i = result.events.length - 1; i >= 0; i--) {
+      if (result.events[i].type === 'player_eliminated') {
+        lastElimIdx = i;
+        break;
+      }
+    }
+    if (lastElimIdx < 0) continue;
+
+    const eliminatedId = result.events[lastElimIdx].actorId;
+
+    // Walk backwards to find the cause
+    let found = false;
+    for (let i = lastElimIdx - 1; i >= 0 && !found; i--) {
+      const e = result.events[i];
+
+      // These are effects, not causes — skip
+      if (e.type === 'player_damaged' || e.type === 'insurance_triggered') continue;
+
+      if (e.type === 'attack_hit' && e.targetId === eliminatedId && e.cardId) {
+        killingBlowCounts[e.cardId] = (killingBlowCounts[e.cardId] ?? 0) + 1;
+        found = true;
+      } else if (e.type === 'mad_cow_triggered' && e.actorId === eliminatedId && e.diceRoll !== undefined) {
+        killingBlowCounts['mad_cow'] = (killingBlowCounts['mad_cow'] ?? 0) + 1;
+        found = true;
+      } else if (e.type === 'haunted_barn_triggered' && e.actorId === eliminatedId) {
+        killingBlowCounts['haunted_barn'] = (killingBlowCounts['haunted_barn'] ?? 0) + 1;
+        found = true;
+      } else if (e.type === 'sacrifice_wheel_spun') {
+        killingBlowCounts['the_sacrifice'] = (killingBlowCounts['the_sacrifice'] ?? 0) + 1;
+        found = true;
+      } else if (e.type === 'turn_start' && i < lastElimIdx - 2) {
+        // Don't scan past the previous turn start
+        break;
+      }
+    }
+  }
+
   const stats: SimulationStats = {
     totalGames,
     playerCount: config.playerCount,
@@ -192,6 +261,8 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
     drawCount,
     drawRate,
     cardStats,
+    killingBlowCounts,
+    drawCauses: { timeout: drawTimeout, nuke: drawNuke },
     redFlags: [],
   };
 

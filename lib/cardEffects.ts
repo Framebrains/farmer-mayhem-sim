@@ -433,12 +433,14 @@ export function applyTheSacrifice(state: GameState, playerId: number): GameState
     }
 
     case 'nuke': {
-      // ALL players die — including the one who played The Sacrifice.
-      // Insurance does NOT work against nuke. Always results in a draw.
+      // ALL players die simultaneously — including the caster.
+      // Insurance does NOT work. We eliminate everyone atomically so that
+      // checkWinCondition never fires mid-loop and awards a false winner.
       for (const p of alive) {
-        state = applyDamage(state, p.id, 99, true);
-        if (state.isOver) break;
+        state = updatePlayer(state, p.id, { isEliminated: true, hp: 0, stationaryCards: [] });
+        state = addEvent(state, { type: 'player_eliminated', actorId: p.id });
       }
+      state = { ...state, isOver: true, isDraw: true, winnerId: null };
       break;
     }
   }

@@ -143,6 +143,11 @@ export interface SimulationStats {
 
   cardStats: Record<string, CardStat>;
 
+  /** How many times each card delivered the decisive killing blow (last elimination) */
+  killingBlowCounts: Record<string, number>;
+  /** Why draws happened: game reached max turns vs. The Sacrifice nuke */
+  drawCauses: { timeout: number; nuke: number };
+
   redFlags: RedFlag[];
 
   sampleGame?: SingleGameResult;
