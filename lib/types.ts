@@ -67,10 +67,12 @@ export interface ChainEvent {
   playerId: number;
   cardId: string;
   newTargetId?: number;
+  previousTargetId?: number; // target BEFORE this redirect (used to revert if God Mode nopes it)
 }
 
 // ─── SPELLOGGHÄNDELSER ───────────────────────────────────────
 export type GameEventType =
+  | 'turn_start'
   | 'attack_declared'
   | 'attack_hit'
   | 'attack_missed'

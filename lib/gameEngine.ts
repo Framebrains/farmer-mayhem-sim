@@ -212,14 +212,20 @@ export function runTurn(state: GameState): GameState {
   const playerId = currentPlayer.id;
   const playerStrategy = getStrategy(currentPlayer.strategy);
 
+  // Log turn_start so the game log can correctly label whose turn it is
+  state = {
+    ...state,
+    events: [...state.events, { turn: state.turnNumber, type: 'turn_start', actorId: playerId }],
+  };
+
   // ── PHASE 1: Check Stop It from other players ──
+  // Stop It can ONLY be played by a player who is NOT the current turn player.
   const alive = alivePlayers(state);
   for (const other of alive) {
     if (other.id === playerId) continue;
     const otherStrategy = getStrategy(other.strategy);
     if (otherStrategy.shouldPlayStopIt(state, other.id, playerId)) {
-      state = applyStopIt(state, other.id);
-      // Skip to draw card phase
+      state = applyStopIt(state, other.id, playerId); // playerId = whose turn is stopped
       state = drawPhase(state, playerId);
       state = endTurnPhase(state, playerId);
       return advanceTurn(state);
@@ -245,13 +251,13 @@ export function runTurn(state: GameState): GameState {
 
   const attackCard = playerStrategy.chooseAttackCard(state, playerId);
   if (attackCard && updatedPlayer.hand.includes(attackCard)) {
-    // ── Stop It window: can also be played right before an attack ──
+    // ── Stop It window: can also be played right before the attack dice roll ──
     let stopItPlayed = false;
     for (const other of alivePlayers(state)) {
-      if (other.id === playerId) continue;
+      if (other.id === playerId) continue; // current player CANNOT Stop It their own turn
       const otherStrategy = getStrategy(other.strategy);
       if (otherStrategy.shouldPlayStopIt(state, other.id, playerId)) {
-        state = applyStopIt(state, other.id);
+        state = applyStopIt(state, other.id, playerId);
         stopItPlayed = true;
         break;
       }
@@ -316,15 +322,30 @@ function resolveAttackChain(state: GameState): GameState {
   if (!state.pendingAttack) return state;
 
   // Each iteration handles ONE reaction (redirect/wrong_goat changes target → re-evaluate).
-  // God Mode resolution terminates immediately. No hard limit on chain length —
-  // only a generous safety cap to prevent infinite loops in edge cases.
-  const SAFETY_CAP = 100;
-  let redirectCount = 0;
+  // ── CHAIN RULES ─────────────────────────────────────────────
+  //
+  // Each iteration of the loop resolves ONE reaction window:
+  //
+  // 1. Current target may play Redirect or Wrong Goat (changes target).
+  //    → Records previousTargetId so God Mode can revert it.
+  //
+  // 2. God Mode nopes the LAST CARD played in the chain:
+  //    • If a redirect just happened → God Mode nopes the redirect,
+  //      target reverts to previousTargetId. The redirect player can
+  //      counter-nope (God Mode the God Mode) to keep the redirect.
+  //    • If no redirect yet → God Mode nopes the attack itself.
+  //      The attacker can counter-nope to push the attack through.
+  //
+  // Safety cap prevents infinite loops from rogue redirect chains.
 
-  while (state.pendingAttack && !state.isOver && redirectCount < SAFETY_CAP) {
+  const SAFETY_CAP = 100;
+  let iterations = 0;
+
+  while (state.pendingAttack && !state.isOver && iterations < SAFETY_CAP) {
+    iterations++;
     const attack = state.pendingAttack;
 
-    // Build reaction order: target first, clockwise (excl. attacker), attacker last
+    // Reaction order: current target first, clockwise (excl. attacker), attacker last
     const alive = alivePlayers(state);
     const targetIdx = alive.findIndex(p => p.id === attack.targetId);
     const ordered: PlayerState[] = [];
@@ -334,57 +355,101 @@ function resolveAttackChain(state: GameState): GameState {
         if (p.id !== attack.attackerId) ordered.push(p);
       }
     }
-    const attacker = alive.find(p => p.id === attack.attackerId);
-    if (attacker) ordered.push(attacker);
+    const attackerState = alive.find(p => p.id === attack.attackerId);
+    if (attackerState) ordered.push(attackerState);
 
-    let reacted = false;
+    let anyReaction = false;
 
     for (const reactor of ordered) {
       if (state.isOver || !state.pendingAttack) break;
-      const strategy = getStrategy(reactor.strategy);
       const currentAttack = state.pendingAttack;
+      const strategy = getStrategy(reactor.strategy);
 
-      // Only the current target can redirect or wrong-goat
+      // ── Step A: Current target can redirect (Redirect / Wrong Goat) ──
       if (currentAttack.targetId === reactor.id) {
         const redirect = strategy.shouldRedirect(state, reactor.id, currentAttack);
         if (redirect.play && redirect.newTargetId >= 0) {
+          const prevTarget = currentAttack.targetId;
           state = applyRedirect(state, reactor.id, redirect.newTargetId);
-          redirectCount++;
-          reacted = true;
-          break; // restart with new target
+          // Tag the new chain event with the previous target for potential revert
+          if (state.pendingAttack && state.pendingAttack.chainHistory.length > 0) {
+            const last = state.pendingAttack.chainHistory[state.pendingAttack.chainHistory.length - 1];
+            last.previousTargetId = prevTarget;
+          }
+          anyReaction = true;
+          break;
         }
 
         if (strategy.shouldPlayWrongGoat(state, reactor.id, currentAttack)) {
+          const prevTarget = currentAttack.targetId;
           state = applyWrongGoat(state, reactor.id, currentAttack.attackerId, currentAttack.targetId);
-          redirectCount++;
-          reacted = true;
+          if (state.pendingAttack && state.pendingAttack.chainHistory.length > 0) {
+            const last = state.pendingAttack.chainHistory[state.pendingAttack.chainHistory.length - 1];
+            last.previousTargetId = prevTarget;
+          }
+          anyReaction = true;
           break;
         }
       }
 
-      // Any player can God Mode — but only ONE nope attempt per chain pass
+      // ── Step B: Any player can God Mode ──
       if (strategy.shouldPlayGodMode(state, reactor.id, currentAttack)) {
         state = applyGodMode(state, reactor.id);
 
-        // Only the attacker can counter-nope (one counter allowed)
-        const attackerPlayer = state.players.find(p => p.id === currentAttack.attackerId && !p.isEliminated);
-        if (attackerPlayer && reactor.id !== currentAttack.attackerId) {
-          const attackerStrategy = getStrategy(attackerPlayer.strategy);
-          if (attackerStrategy.shouldPlayGodMode(state, attackerPlayer.id, currentAttack)) {
-            state = applyGodMode(state, attackerPlayer.id);
-            // Counter-nope cancels the God Mode → attack proceeds, chain ends
-            return state;
-          }
-        }
+        const lastChainEvent = currentAttack.chainHistory.at(-1);
+        const isNopingRedirect = lastChainEvent &&
+          (lastChainEvent.type === 'redirect' || lastChainEvent.type === 'wrong_goat');
 
-        // God Mode succeeded — attack is noped, chain ends
-        state = { ...state, pendingAttack: null };
-        return state;
+        if (isNopingRedirect) {
+          // ── God Mode nopes the REDIRECT ──
+          // The player who played the redirect can counter-nope to keep it.
+          const redirectPlayerId = lastChainEvent.playerId;
+          const redirectPlayer = state.players.find(p => p.id === redirectPlayerId && !p.isEliminated);
+          if (redirectPlayer) {
+            const redirectStrategy = getStrategy(redirectPlayer.strategy);
+            if (redirectStrategy.shouldPlayGodMode(state, redirectPlayer.id, currentAttack)) {
+              state = applyGodMode(state, redirectPlayer.id);
+              // Counter-nope: redirect stands, restart loop with new target
+              anyReaction = true;
+              break;
+            }
+          }
+          // God Mode succeeds: revert target to what it was before the redirect
+          const prevTargetId = lastChainEvent.previousTargetId;
+          if (state.pendingAttack && prevTargetId !== undefined) {
+            state = {
+              ...state,
+              pendingAttack: {
+                ...state.pendingAttack,
+                targetId: prevTargetId,
+                chainHistory: state.pendingAttack.chainHistory.slice(0, -1),
+              },
+            };
+          }
+          anyReaction = true;
+          break;
+
+        } else {
+          // ── God Mode nopes the ATTACK ITSELF ──
+          // The attacker can counter-nope to push the attack through.
+          const attackerPlayer = state.players.find(p => p.id === currentAttack.attackerId && !p.isEliminated);
+          if (attackerPlayer && reactor.id !== currentAttack.attackerId) {
+            const attackerStrategy = getStrategy(attackerPlayer.strategy);
+            if (attackerStrategy.shouldPlayGodMode(state, attackerPlayer.id, currentAttack)) {
+              state = applyGodMode(state, attackerPlayer.id);
+              // Counter-nope: attack proceeds, chain ends
+              return state;
+            }
+          }
+          // God Mode succeeds: attack is cancelled
+          state = { ...state, pendingAttack: null };
+          return state;
+        }
       }
     }
 
-    // No reactions this pass → proceed to attack resolution
-    if (!reacted) break;
+    // No reactions → proceed to dice roll
+    if (!anyReaction) break;
   }
 
   return state;

@@ -179,6 +179,7 @@ function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; 
       }
     }
 
+    case 'turn_start':
     case 'game_over':
     case 'draw':
       return null;
@@ -208,13 +209,22 @@ interface RoundGroup {
 }
 
 function buildRounds(game: SingleGameResult): RoundGroup[] {
-  // Group events by player turn first
+  // Group events by turn number.
+  // The section header (actorId) is always taken from the 'turn_start' event so it
+  // correctly reflects WHOSE TURN it is — not who reacted first.
   const turnMap = new Map<number, PlayerTurnGroup>();
   for (const event of game.events) {
     if (!turnMap.has(event.turn)) {
       turnMap.set(event.turn, { turnNumber: event.turn, actorId: event.actorId, events: [] });
     }
-    turnMap.get(event.turn)!.events.push(event);
+    // Override actorId with the turn_start event's actorId (= current turn player)
+    if (event.type === 'turn_start') {
+      turnMap.get(event.turn)!.actorId = event.actorId;
+    }
+    // Don't add turn_start itself to the events list (no visible log entry needed)
+    if (event.type !== 'turn_start') {
+      turnMap.get(event.turn)!.events.push(event);
+    }
   }
 
   const turns = Array.from(turnMap.values()).sort((a, b) => a.turnNumber - b.turnNumber);

@@ -168,14 +168,16 @@ export function applyGodMode(state: GameState, playerId: number): GameState {
 
 // ─── STOP IT ────────────────────────────────────────────────
 
-/** End the current player's turn immediately (skip to draw card) */
-export function applyStopIt(state: GameState, playerId: number): GameState {
+/** End the current player's turn immediately (skip to draw card).
+ *  stopTargetId = the player whose turn is being stopped. */
+export function applyStopIt(state: GameState, playerId: number, stopTargetId: number): GameState {
   const player = state.players.find(p => p.id === playerId)!;
   state = updatePlayer(state, playerId, {
     hand: removeCardFromHand(player, 'stop_it').hand,
     cardsPlayed: player.cardsPlayed + 1,
   });
-  state = addEvent(state, { type: 'card_played', actorId: playerId, cardId: 'stop_it' });
+  // actorId = player who played Stop It; targetId = player whose turn ends
+  state = addEvent(state, { type: 'card_played', actorId: playerId, targetId: stopTargetId, cardId: 'stop_it' });
   return { ...state, phase: 'draw_card', pendingAttack: null };
 }
 
