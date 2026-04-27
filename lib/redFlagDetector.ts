@@ -15,52 +15,54 @@ export function detectRedFlags(stats: SimulationStats, expectedWinRate: number):
   const flags: RedFlag[] = [];
   const expected = expectedWinRate; // e.g. 0.333 for 3 players
 
-  // ── CRITICAL: card's win rate when played > 1.8× expected ──────────────
-  // e.g. for 3 players: winCorrelation > (0.333 * 1.8) / (0.333 * 2) = 0.9
-  const criticalNormThreshold = 0.9; // normalised threshold
-  const criticalRawThreshold = expected * 1.8;
+  // ── CARD BALANCE FLAGS ─────────────────────────────────────────────────
+  //
+  // Requirements before flagging a card:
+  //   • At least 1 000 simulated games (below this the noise dominates)
+  //   • Card played in ≥ 25% of all games (ensures adequate sample)
+  //   • winCorrelation uses Bayesian-smoothed values (see dataAggregator)
+  //     so survivorship bias from rare cards is already corrected for
+  //
+  // Thresholds (normalised winCorrelation, 0.5 = balanced):
+  //   Critical  > 0.92  → smoothed win rate > 1.85× expected
+  //   Warning   < 0.30  → card barely appears in any win
 
-  for (const [id, card] of Object.entries(stats.cardStats)) {
-    const def = CARD_DATABASE[id];
-    if (!def || def.type === 'trap' || def.timing === 'automatic') continue;
-    // Require meaningful sample: played in at least 10% of games
-    if (card.timesPlayed < stats.totalGames * 0.1) continue;
+  const MIN_GAMES_FOR_CARD_FLAGS = 1000;
+  const MIN_PLAY_FRACTION = 0.25; // card must be played in ≥25% of games
 
-    const rawWinRate = card.winCorrelation * 2 * expected;
+  if (stats.totalGames >= MIN_GAMES_FOR_CARD_FLAGS) {
+    for (const [id, card] of Object.entries(stats.cardStats)) {
+      const def = CARD_DATABASE[id];
+      if (!def || def.type === 'trap' || def.timing === 'automatic') continue;
+      if (card.instanceCount < stats.totalGames * MIN_PLAY_FRACTION) continue;
 
-    if (card.winCorrelation > criticalNormThreshold) {
-      const name = def.name;
-      flags.push({
-        severity: 'critical',
-        category: 'card_balance',
-        message: `${name} är potentiellt för kraftigt`,
-        detail: `Vinstfrekvens när spelat: ${(rawWinRate * 100).toFixed(0)}% (förväntat: ${(expected * 100).toFixed(0)}%)`,
-        suggestion: 'Minska antal i leken, justera effekten, eller lägg till motåtgärder',
-        value: rawWinRate,
-        threshold: criticalRawThreshold,
-      });
-    }
-  }
+      const smoothedRate = card.winCorrelation * 2 * expected; // display rate
 
-  // ── WARNING: card's win rate < 0.4× expected (kortet bidrar inte) ──────
-  const weakRawThreshold = expected * 0.4;
-  for (const [id, card] of Object.entries(stats.cardStats)) {
-    const def = CARD_DATABASE[id];
-    if (!def || def.type === 'trap' || def.timing === 'automatic') continue;
-    if (card.timesPlayed < stats.totalGames * 0.1) continue;
+      // Critical: consistently strong across many plays
+      if (card.winCorrelation > 0.92) {
+        flags.push({
+          severity: 'critical',
+          category: 'card_balance',
+          message: `${def.name} verkar konsekvent för kraftigt`,
+          detail: `Justerad vinstfrekvens: ${(smoothedRate * 100).toFixed(0)}% (förväntat: ${(expected * 100).toFixed(0)}%) — baserat på ${card.instanceCount} spel`,
+          suggestion: 'Minska antal i leken, justera effekten, eller lägg till motåtgärder',
+          value: smoothedRate,
+          threshold: expected * 1.85,
+        });
+      }
 
-    const rawWinRate = card.winCorrelation * 2 * expected;
-    if (rawWinRate < weakRawThreshold && card.winCorrelation > 0) {
-      const name = def.name;
-      flags.push({
-        severity: 'warning',
-        category: 'card_balance',
-        message: `${name} bidrar sällan till vinst`,
-        detail: `Vinstfrekvens när spelat: ${(rawWinRate * 100).toFixed(0)}% (förväntat: ${(expected * 100).toFixed(0)}%)`,
-        suggestion: 'Överväg att stärka kortet eller öka antalet i leken',
-        value: rawWinRate,
-        threshold: weakRawThreshold,
-      });
+      // Weak: frequently played but rarely helps
+      if (card.winCorrelation < 0.28 && card.timesPlayed > 0) {
+        flags.push({
+          severity: 'warning',
+          category: 'card_balance',
+          message: `${def.name} bidrar sällan till vinst trots hög spelfrekvens`,
+          detail: `Justerad vinstfrekvens: ${(smoothedRate * 100).toFixed(0)}% (förväntat: ${(expected * 100).toFixed(0)}%) — baserat på ${card.instanceCount} spel`,
+          suggestion: 'Kortet är defensivt/reaktivt eller för svagt — överväg att stärka det',
+          value: smoothedRate,
+          threshold: expected * 0.55,
+        });
+      }
     }
   }
 
@@ -72,11 +74,10 @@ export function detectRedFlags(stats: SimulationStats, expectedWinRate: number):
     if (card.timesPlayed < 5) continue;
     if (card.timesDrawn < stats.totalGames * 0.1) continue;
     if (card.playRate < 0.2 && card.timesDrawn > 0) {
-      const name = def.name;
       flags.push({
         severity: 'warning',
         category: 'card_balance',
-        message: `${name} spelas sällan när det dras`,
+        message: `${def.name} spelas sällan när det dras`,
         detail: `Spelades i ${(card.playRate * 100).toFixed(0)}% av fallen det drogs`,
         suggestion: 'Kortet kan vara svårt att använda eller situationsspecifikt — överväg redesign',
         value: card.playRate,
@@ -85,10 +86,11 @@ export function detectRedFlags(stats: SimulationStats, expectedWinRate: number):
     }
   }
 
-  // ── WARNING: first-mover advantage > 15pp over expected ────────────────
-  if (stats.winRateByPosition.length > 0) {
+  // ── WARNING: first-mover advantage — only flag with enough data ────────
+  // Require 500+ games to avoid noise (53% from 100 games = 5 extra wins = noise)
+  if (stats.totalGames >= 500 && stats.winRateByPosition.length > 0) {
     const firstRate = stats.winRateByPosition[0];
-    if (firstRate > expected + 0.15) {
+    if (firstRate > expected + 0.12) {
       flags.push({
         severity: 'warning',
         category: 'player_balance',
@@ -96,14 +98,14 @@ export function detectRedFlags(stats: SimulationStats, expectedWinRate: number):
         detail: `Startspelaren vinner ${(firstRate * 100).toFixed(1)}% vs förväntat ${(expected * 100).toFixed(1)}%`,
         suggestion: 'Ge kompensation till senare spelare (fler kort, extra åtgärd)',
         value: firstRate,
-        threshold: expected + 0.15,
+        threshold: expected + 0.12,
       });
     }
   }
 
   // ── WARNING: defensive strategy wins < 40% of expected ──────────────────
   const defRate = stats.winRateByStrategy.defensive;
-  if (defRate < expected * 0.4 && stats.totalGames > 200) {
+  if (defRate < expected * 0.4 && stats.totalGames >= 500) {
     flags.push({
       severity: 'warning',
       category: 'strategy_balance',

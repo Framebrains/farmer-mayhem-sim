@@ -154,7 +154,9 @@ export interface CardStat {
   timesPlayed: number;
   playRate: number;
   winnerHadCard: number;
-  winCorrelation: number;
+  winCorrelation: number;     // Bayesian-smoothed normalised win rate (0.5 = balanced)
+  rawWinRate: number;         // Raw observed win rate (unsmoothed) for display
+  instanceCount: number;      // How many (player, game) pairs used this card
   avgTimesPerGame: number;
 }
 

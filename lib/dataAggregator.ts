@@ -139,15 +139,29 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
     const wins = playerWins[cardId] || 0;
     const plays = totalPlays[cardId] || 0;
 
-    // Actual win rate when a player used this card (0–1)
-    // Balanced card → ≈ expectedWinRate (1/playerCount)
-    // OP card → significantly higher than expectedWinRate
-    const winRateWhenPlayed = instances > 0 ? wins / instances : 0;
+    // Raw win rate (unsmoothed) — for display only
+    const rawWinRate = instances > 0 ? wins / instances : 0;
 
-    // Normalise for display: express as how much above/below expected
-    // 0.5 = neutral (= expectedWinRate), 1.0 = 2x expected (very strong), 0 = never wins
+    // ── Bayesian smoothing ────────────────────────────────────────────────
+    // Problem: rare cards (e.g. Unicorn ×7) are played in few (player,game) pairs.
+    // If those few players happen to win, the raw rate looks huge (survivorship bias).
+    // Fix: add α pseudo-observations at the expected win rate before computing.
+    //
+    // α scales with total games so that with more data, real signal dominates:
+    //   100 games  → α = max(20, 10)  = 20  (heavy smoothing — don't trust 100 games)
+    //   1 000 games → α = max(20, 100) = 100 (moderate)
+    //   5 000 games → α = max(20, 500) = 500 (light smoothing)
+    //
+    // Result: a rare card played 15 times with 10 wins (raw 67%) →
+    //   α=20: smoothed = (10 + 20×0.33) / (15+20) = 16.7/35 = 47.7% ≈ balanced ✓
+    const BAYES_ALPHA = Math.max(20, totalGames * 0.1);
+    const smoothedWins = wins + BAYES_ALPHA * expectedWinRate;
+    const smoothedInstances = instances + BAYES_ALPHA;
+    const smoothedWinRate = smoothedInstances > 0 ? smoothedWins / smoothedInstances : expectedWinRate;
+
+    // Normalise: 0.5 = expected, 1.0 = 2× expected, 0 = never wins
     const winCorrelation = instances > 0
-      ? Math.min(winRateWhenPlayed / (expectedWinRate * 2), 1)
+      ? Math.min(smoothedWinRate / (expectedWinRate * 2), 1)
       : 0;
 
     cardStats[cardId] = {
@@ -157,6 +171,8 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
       playRate: estimatedDrawn > 0 ? plays / estimatedDrawn : 0,
       winnerHadCard: wins,
       winCorrelation,
+      rawWinRate,
+      instanceCount: instances,
       avgTimesPerGame: plays / totalGames,
     };
   }
