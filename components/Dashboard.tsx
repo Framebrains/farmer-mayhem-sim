@@ -9,8 +9,9 @@ import PlayerCountTab from '@/components/tabs/PlayerCountTab';
 import RedFlagsTab from '@/components/tabs/RedFlagsTab';
 import GameLogTab from '@/components/tabs/GameLogTab';
 import InsightsTab from '@/components/tabs/InsightsTab';
+import RulesTab from '@/components/tabs/RulesTab';
 
-type TabId = 'overview' | 'cards' | 'strategy' | 'playercount' | 'redflags' | 'insights' | 'gamelog';
+type TabId = 'overview' | 'cards' | 'strategy' | 'playercount' | 'redflags' | 'insights' | 'gamelog' | 'rules';
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'overview', label: 'Översikt' },
@@ -20,6 +21,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'redflags', label: 'Röda flaggor' },
   { id: 'insights', label: 'Insikter' },
   { id: 'gamelog', label: 'Spellog' },
+  { id: 'rules', label: '📋 Regelverifiering' },
 ];
 
 interface DashboardProps {
@@ -81,6 +83,7 @@ export default function Dashboard({ stats }: DashboardProps) {
         {activeTab === 'redflags' && <RedFlagsTab stats={stats} />}
         {activeTab === 'insights' && <InsightsTab stats={stats} />}
         {activeTab === 'gamelog' && <GameLogTab stats={stats} />}
+        {activeTab === 'rules' && <RulesTab />}
       </div>
     </div>
   );
