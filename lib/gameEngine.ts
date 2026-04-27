@@ -87,6 +87,7 @@ export function initGame(config: SimConfig): GameState {
     deck,
     discardPile: [],
     currentPlayerIndex: startPlayerIndex,
+    startingPlayerId: startPlayerIndex,
     turnNumber: 0,
     phase: 'play_cards',
     pendingAttack: null,
@@ -516,6 +517,12 @@ function drawPhase(state: GameState, playerId: number): GameState {
       players: state.players.map(p =>
         p.id === playerId ? { ...p, hand: [...p.hand, card] } : p
       ),
+      events: [...state.events, {
+        turn: state.turnNumber,
+        type: 'draw' as const,
+        actorId: playerId,
+        cardId: card,
+      }],
     };
   }
 

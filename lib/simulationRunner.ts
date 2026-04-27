@@ -10,6 +10,9 @@ function runSingleGame(config: SimConfig): SingleGameResult {
     state = runTurn(state);
   }
 
+  const n = config.playerCount;
+  const startId = state.startingPlayerId;
+
   const playerResults: PlayerResult[] = state.players.map(p => ({
     id: p.id,
     strategy: p.strategy,
@@ -21,7 +24,8 @@ function runSingleGame(config: SimConfig): SingleGameResult {
     hadInsurance: p.hasUsedInsurance || p.hand.includes('insurance'),
     insuranceTriggered: p.hasUsedInsurance,
     cardsInHandAtEnd: p.hand.length,
-    turnOrder: p.id,
+    // 0 = went first (won dice roll), 1 = second clockwise, etc.
+    turnOrder: (p.id - startId + n) % n,
   }));
 
   return {
@@ -29,6 +33,7 @@ function runSingleGame(config: SimConfig): SingleGameResult {
     isDraw: state.isDraw,
     turnsPlayed: state.turnNumber,
     playerCount: config.playerCount,
+    startingPlayerId: startId,
     playerResults,
     events: state.events,
     deckConfig: config.deckConfig,

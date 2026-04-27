@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 // ─── TYPES ───────────────────────────────────────────────────
 
@@ -480,11 +480,15 @@ function StatusPill({ status, onChange }: { status: Status; onChange: (s: Status
 function RuleCard({
   rule,
   status,
+  correction,
   onStatusChange,
+  onCorrectionChange,
 }: {
   rule: RuleEntry;
   status: Status;
+  correction: string;
   onStatusChange: (id: string, s: Status) => void;
+  onCorrectionChange: (id: string, text: string) => void;
 }) {
   return (
     <div className={`rounded-lg border p-4 transition-colors ${
@@ -516,19 +520,93 @@ function RuleCard({
           {rule.note}
         </p>
       )}
+
+      {/* Correction field — only shown when marked as wrong */}
+      {status === 'wrong' && (
+        <div className="mt-3">
+          <label className="text-xs font-semibold text-red-300 block mb-1">
+            ✏️ Korrekt beteende (skriv hur det faktiskt fungerar):
+          </label>
+          <textarea
+            value={correction}
+            onChange={(e) => onCorrectionChange(rule.id, e.target.value)}
+            placeholder="Beskriv det korrekta beteendet..."
+            rows={3}
+            className="w-full bg-zinc-900 border border-red-800 rounded-md px-3 py-2 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-red-500 resize-y"
+          />
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── MAIN COMPONENT ──────────────────────────────────────────
 
+const LS_STATUSES = 'farmer_rules_statuses';
+const LS_CORRECTIONS = 'farmer_rules_corrections';
+
 export default function RulesTab() {
   const [statuses, setStatuses] = useState<Record<string, Status>>({});
+  const [corrections, setCorrections] = useState<Record<string, string>>({});
   const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedStatuses = localStorage.getItem(LS_STATUSES);
+      const savedCorrections = localStorage.getItem(LS_CORRECTIONS);
+      if (savedStatuses) setStatuses(JSON.parse(savedStatuses));
+      if (savedCorrections) setCorrections(JSON.parse(savedCorrections));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Auto-save whenever statuses or corrections change
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_STATUSES, JSON.stringify(statuses));
+    } catch { /* ignore */ }
+  }, [statuses]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_CORRECTIONS, JSON.stringify(corrections));
+    } catch { /* ignore */ }
+  }, [corrections]);
 
   function handleStatusChange(id: string, status: Status) {
     setStatuses(prev => ({ ...prev, [id]: status }));
   }
+
+  function handleCorrectionChange(id: string, text: string) {
+    setCorrections(prev => ({ ...prev, [id]: text }));
+  }
+
+  const handleExport = useCallback(() => {
+    const allRulesFlat = SECTIONS.flatMap(s => s.rules.map(r => ({ ...r, sectionHeading: s.heading, sectionIcon: s.icon })));
+    const wrongRules = allRulesFlat.filter(r => statuses[r.id] === 'wrong');
+    if (wrongRules.length === 0) return;
+
+    const lines = [
+      '=== FARMER MAYHEM — REGELKORRIGERINGAR ===',
+      '',
+      ...wrongRules.map(r => [
+        `[${r.sectionIcon} ${r.sectionHeading}] ${r.title}`,
+        `  Simulering: ${r.simBehavior}`,
+        corrections[r.id]?.trim()
+          ? `  KORREKT:    ${corrections[r.id].trim()}`
+          : `  KORREKT:    (inte specificerat ännu)`,
+        '',
+      ].join('\n')),
+    ];
+
+    navigator.clipboard.writeText(lines.join('\n')).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    });
+  }, [statuses, corrections]);
 
   const allRules = SECTIONS.flatMap(s => s.rules);
   const totalCount = allRules.length;
@@ -540,12 +618,25 @@ export default function RulesTab() {
     <div className="space-y-6">
       {/* Header */}
       <div className="bg-zinc-800/50 border border-zinc-700 rounded-xl p-4">
-        <h2 className="text-sm font-semibold text-white mb-1">Regelverifiering</h2>
+        <div className="flex items-center justify-between mb-1 gap-3">
+          <h2 className="text-sm font-semibold text-white">Regelverifiering</h2>
+          <div className="flex gap-2">
+            {wrongCount > 0 && (
+              <button
+                onClick={handleExport}
+                className="text-xs px-3 py-1.5 rounded-lg bg-red-900/50 border border-red-700 text-red-300 hover:bg-red-800/60 transition-colors font-medium"
+              >
+                {copied ? '✓ Kopierat!' : `📋 Kopiera ${wrongCount} korrigering${wrongCount !== 1 ? 'ar' : ''}`}
+              </button>
+            )}
+          </div>
+        </div>
         <p className="text-xs text-zinc-400 leading-relaxed">
-          Här ser du exakt hur simuleringen tolkar varje spelregel. Klicka på varje regel för att markera om den
-          <span className="text-emerald-400 font-semibold"> stämmer</span> eller är{' '}
-          <span className="text-red-400 font-semibold">FEL</span>. Allt du markerar som fel hjälper oss att
-          fixa simuleringen.
+          Klicka på statusknappen för att markera om regeln{' '}
+          <span className="text-emerald-400 font-semibold">stämmer</span> eller är{' '}
+          <span className="text-red-400 font-semibold">FEL</span>.
+          När en regel är markerad som FEL — skriv det korrekta beteendet i textrutan som dyker upp.
+          Allt sparas automatiskt i webbläsaren.
         </p>
         {/* Progress bar */}
         <div className="mt-3 flex gap-3 items-center">
@@ -559,19 +650,29 @@ export default function RulesTab() {
             <span className="text-zinc-500">{unknownCount}</span> ?
           </span>
         </div>
+        <p className="text-xs text-zinc-600 mt-2">💾 Auto-sparas i webbläsarens localStorage</p>
       </div>
 
       {/* Warning flags summary */}
       {wrongCount > 0 && (
         <div className="bg-red-950/40 border border-red-700 rounded-xl p-4">
           <h3 className="text-sm font-semibold text-red-300 mb-2">⚠️ {wrongCount} regler markerade som FEL</h3>
-          <ul className="space-y-1">
+          <ul className="space-y-2">
             {allRules.filter(r => statuses[r.id] === 'wrong').map(r => {
               const section = SECTIONS.find(s => s.rules.some(rr => rr.id === r.id));
+              const corr = corrections[r.id]?.trim();
               return (
-                <li key={r.id} className="text-xs text-red-200">
-                  <span className="text-red-500 mr-1">{section?.icon}</span>
-                  <span className="font-medium">{section?.heading}:</span> {r.title}
+                <li key={r.id} className="text-xs">
+                  <div className="text-red-200">
+                    <span className="text-red-500 mr-1">{section?.icon}</span>
+                    <span className="font-medium">{section?.heading}:</span> {r.title}
+                  </div>
+                  {corr && (
+                    <div className="mt-0.5 ml-4 text-emerald-400 italic">→ {corr}</div>
+                  )}
+                  {!corr && (
+                    <div className="mt-0.5 ml-4 text-zinc-600 italic">→ (korrekt beteende ej specificerat)</div>
+                  )}
                 </li>
               );
             })}
@@ -624,7 +725,9 @@ export default function RulesTab() {
                   key={rule.id}
                   rule={rule}
                   status={statuses[rule.id] ?? 'unknown'}
+                  correction={corrections[rule.id] ?? ''}
                   onStatusChange={handleStatusChange}
+                  onCorrectionChange={handleCorrectionChange}
                 />
               ))}
             </div>

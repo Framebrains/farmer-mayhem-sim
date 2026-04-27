@@ -39,6 +39,8 @@ export interface GameState {
   deck: string[];
   discardPile: string[];
   currentPlayerIndex: number;
+  /** The player ID who went first (won the opening dice roll) — stays fixed for the whole game */
+  startingPlayerId: number;
   turnNumber: number;
   phase: TurnPhase;
   pendingAttack: PendingAttack | null;
@@ -96,6 +98,8 @@ export interface GameEvent {
   cardId?: string;
   diceRoll?: number;
   detail?: string;
+  /** Specific card IDs involved (e.g. drawn by Polacken, stolen by Steal, received via Begger) */
+  cards?: string[];
 }
 
 // ─── SIMULERINGSRESULTAT ─────────────────────────────────────
@@ -104,6 +108,8 @@ export interface SingleGameResult {
   isDraw: boolean;
   turnsPlayed: number;
   playerCount: number;
+  /** Player ID that went first (won opening dice roll). Display as Spelare 1. */
+  startingPlayerId: number;
   playerResults: PlayerResult[];
   events: GameEvent[];
   deckConfig: DeckConfig;

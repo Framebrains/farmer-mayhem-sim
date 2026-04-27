@@ -14,15 +14,30 @@ function cardName(cardId: string): string {
   return CARD_DATABASE[cardId]?.name ?? cardId;
 }
 
+/**
+ * Display number for a player: the one who won the opening dice roll is always
+ * "Spelare 1", the next clockwise is "Spelare 2", etc.
+ */
+function displayNum(game: SingleGameResult, playerId: number): number {
+  const n = game.playerCount;
+  return ((playerId - game.startingPlayerId + n) % n) + 1;
+}
+
 function playerLabel(game: SingleGameResult, playerId: number): string {
   const result = game.playerResults.find(p => p.id === playerId);
   const strat = result ? STRATEGY_LABELS[result.strategy] ?? result.strategy : '?';
-  return `Spelare ${playerId + 1} (${strat})`;
+  return `Spelare ${displayNum(game, playerId)} (${strat})`;
 }
 
 // Short name for inline use in sentences
 function pName(game: SingleGameResult, playerId: number): string {
-  return `Sp.${playerId + 1}`;
+  return `Sp.${displayNum(game, playerId)}`;
+}
+
+/** Format a card list as "Card A, Card B, Card C" */
+function cardList(cards: string[] | undefined): string {
+  if (!cards || cards.length === 0) return '?';
+  return cards.map(cardName).join(', ');
 }
 
 /** Format a single event as a Swedish sentence. Returns null to skip. */
@@ -116,7 +131,7 @@ function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; 
           };
         case 'steal':
           return {
-            text: `🤚  ${actor} stjäl 2 slumpmässiga kort från ${target}`,
+            text: `🤚  ${actor} stjäl **${cardList(event.cards)}** från ${target}`,
             color: 'text-orange-300',
           };
         case 'identity_theft':
@@ -136,12 +151,16 @@ function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; 
           };
         case 'polacken':
           return {
-            text: `🃏  ${actor} spelar **Polacken** och drar 3 kort`,
+            text: event.cards && event.cards.length > 0
+              ? `🃏  ${actor} spelar **Polacken** och drar: **${cardList(event.cards)}**`
+              : `🃏  ${actor} spelar **Polacken** och drar 3 kort`,
             color: 'text-teal-400',
           };
         case 'begger':
           return {
-            text: `🙏  ${actor} spelar **Begger** — varje motspelare ger bort ett kort`,
+            text: event.cards && event.cards.length > 0
+              ? `🙏  ${actor} spelar **Begger** — fick: **${cardList(event.cards)}**`
+              : `🙏  ${actor} spelar **Begger** — ingen gav något`,
             color: 'text-teal-300',
           };
         case 'silvertejp':
@@ -179,9 +198,15 @@ function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; 
       }
     }
 
+    case 'draw':
+      if (!event.cardId) return null;
+      return {
+        text: `📥  ${actorShort} drar: **${cardName(event.cardId)}**`,
+        color: 'text-zinc-500',
+      };
+
     case 'turn_start':
     case 'game_over':
-    case 'draw':
       return null;
 
     default:
@@ -283,6 +308,15 @@ function GameLog({ game }: { game: SingleGameResult }) {
           <span className="text-white font-semibold">{rounds.length}</span>
           <span className="text-zinc-500 text-xs ml-1">({game.playerCount} spelare)</span>
         </div>
+        <div>
+          <span className="text-zinc-400">Startar: </span>
+          <span className="text-zinc-200 font-semibold">{playerLabel(game, game.startingPlayerId)}</span>
+          <span className="text-zinc-500 text-xs ml-1">(vann tärningsslaget)</span>
+        </div>
+      </div>
+      {/* Player renumbering note */}
+      <div className="bg-zinc-800/40 border border-zinc-700/60 rounded-lg px-3 py-2 text-xs text-zinc-500">
+        🎲 Spelarna är namngivna i turordning — den som vann tärningsslaget är <strong className="text-zinc-400">Spelare 1</strong>, nästa medsols är Spelare 2, osv.
       </div>
 
       {/* Round-by-round log */}

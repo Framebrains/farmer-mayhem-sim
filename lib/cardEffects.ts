@@ -29,8 +29,7 @@ function addEvent(state: GameState, event: Omit<GameEvent, 'turn'>): GameState {
   };
 }
 
-function drawCards(state: GameState, playerId: number, count: number): GameState {
-  const player = state.players.find(p => p.id === playerId)!;
+function drawCards(state: GameState, playerId: number, count: number): { state: GameState; drawn: string[] } {
   const drawn: string[] = [];
   let deck = [...state.deck];
   let discardPile = [...state.discardPile];
@@ -45,12 +44,15 @@ function drawCards(state: GameState, playerId: number, count: number): GameState
   }
 
   return {
-    ...state,
-    deck,
-    discardPile,
-    players: state.players.map(p =>
-      p.id === playerId ? { ...p, hand: [...p.hand, ...drawn] } : p
-    ),
+    state: {
+      ...state,
+      deck,
+      discardPile,
+      players: state.players.map(p =>
+        p.id === playerId ? { ...p, hand: [...p.hand, ...drawn] } : p
+      ),
+    },
+    drawn,
   };
 }
 
@@ -309,7 +311,7 @@ export function applySkinnyDipping(state: GameState, playerId: number, targetId:
   }
 
   const winnerId = playerRoll > targetRoll ? playerId : targetId;
-  state = drawCards(state, winnerId, 2);
+  ({ state } = drawCards(state, winnerId, 2));
   state = addEvent(state, { type: 'card_played', actorId: playerId, targetId, cardId: 'skinny_dipping', detail: `Player ${winnerId} won the duel` });
   return state;
 }
@@ -332,7 +334,7 @@ export function applyTheSacrifice(state: GameState, playerId: number): GameState
 
   switch (segment) {
     case 'draw_3':
-      state = drawCards(state, playerId, 3);
+      ({ state } = drawCards(state, playerId, 3));
       break;
 
     case 'right_discard_2': {
@@ -499,7 +501,7 @@ export function applyBegger(state: GameState, playerId: number): GameState {
 
   const updatedPlayer = state.players.find(p => p.id === playerId)!;
   state = updatePlayer(state, playerId, { hand: [...updatedPlayer.hand, ...received] });
-  state = addEvent(state, { type: 'card_played', actorId: playerId, cardId: 'begger', detail: `Received ${received.length} cards` });
+  state = addEvent(state, { type: 'card_played', actorId: playerId, cardId: 'begger', cards: received });
   return state;
 }
 
@@ -526,7 +528,7 @@ export function applySteal(state: GameState, playerId: number, targetId: number)
   state = updatePlayer(state, targetId, { hand: remaining });
   const updatedPlayer = state.players.find(p => p.id === playerId)!;
   state = updatePlayer(state, playerId, { hand: [...updatedPlayer.hand, ...stolen] });
-  state = addEvent(state, { type: 'card_played', actorId: playerId, targetId, cardId: 'steal' });
+  state = addEvent(state, { type: 'card_played', actorId: playerId, targetId, cardId: 'steal', cards: stolen });
   return state;
 }
 
@@ -590,8 +592,9 @@ export function applyPolacken(state: GameState, playerId: number): GameState {
     hand: removeCardFromHand(player, 'polacken').hand,
     cardsPlayed: player.cardsPlayed + 1,
   });
-  state = drawCards(state, playerId, 3);
-  state = addEvent(state, { type: 'card_played', actorId: playerId, cardId: 'polacken' });
+  const { state: afterDraw, drawn } = drawCards(state, playerId, 3);
+  state = afterDraw;
+  state = addEvent(state, { type: 'card_played', actorId: playerId, cardId: 'polacken', cards: drawn });
   return state;
 }
 

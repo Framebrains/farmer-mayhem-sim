@@ -5,7 +5,6 @@ import { SimConfig, SimulationStats } from '@/lib/types';
 import { runSimulations } from '@/lib/simulationRunner';
 import ConfigPanel from '@/components/ConfigPanel';
 import Dashboard from '@/components/Dashboard';
-import RulesTab from '@/components/tabs/RulesTab';
 
 const DEFAULT_CONFIG: SimConfig = {
   playerCount: 3,
@@ -112,16 +111,6 @@ export default function Home() {
               </div>
             )}
 
-            {/* Rules tab always visible */}
-            <div className="bg-zinc-900 border border-zinc-700 rounded-2xl overflow-hidden">
-              <div className="border-b border-zinc-700 px-5 py-3">
-                <span className="text-sm font-semibold text-zinc-200">📋 Regelverifiering</span>
-                <span className="text-xs text-zinc-500 ml-2">— verifiera att simuleringen tolkar reglerna rätt</span>
-              </div>
-              <div className="p-5 md:p-6">
-                <RulesTab />
-              </div>
-            </div>
           </div>
         </div>
       </div>
