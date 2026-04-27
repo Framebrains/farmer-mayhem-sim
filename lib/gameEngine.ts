@@ -70,11 +70,23 @@ export function initGame(config: SimConfig): GameState {
   // Shuffle trap cards into remaining deck
   deck = shuffleArray([...deck, ...trapCards]);
 
+  // ── Determine starting player via dice roll (highest starts) ──
+  let diceRolls = players.map(p => ({ id: p.id, roll: rollDice() }));
+  let maxRoll = Math.max(...diceRolls.map(r => r.roll));
+  let candidates = diceRolls.filter(r => r.roll === maxRoll);
+  // Re-roll ties until one winner
+  while (candidates.length > 1) {
+    candidates = candidates.map(c => ({ id: c.id, roll: rollDice() }));
+    maxRoll = Math.max(...candidates.map(r => r.roll));
+    candidates = candidates.filter(r => r.roll === maxRoll);
+  }
+  const startPlayerIndex = candidates[0].id;
+
   return {
     players,
     deck,
     discardPile: [],
-    currentPlayerIndex: 0,
+    currentPlayerIndex: startPlayerIndex,
     turnNumber: 0,
     phase: 'play_cards',
     pendingAttack: null,
@@ -215,34 +227,13 @@ export function runTurn(state: GameState): GameState {
   }
 
   // ── PHASE 1b: Play specialty cards on own turn ──
+  // God Mode is purely reactive — never used proactively to nope specialty cards
   const specialtyCards = playerStrategy.chooseSpecialtyCardsThisTurn(state, playerId);
   for (const cardId of specialtyCards) {
     if (state.isOver) break;
     const player = state.players.find(p => p.id === playerId)!;
     if (!player.hand.includes(cardId)) continue;
     if (player.isEliminated) break;
-
-    // Check if God Mode can nope this card
-    const cardDef = CARD_DATABASE[cardId];
-    if (cardDef && cardDef.canBeNopedByGodMode) {
-      let noped = false;
-      for (const other of alive) {
-        if (other.id === playerId || other.isEliminated) continue;
-        const otherStrategy = getStrategy(other.strategy);
-        // Create a fake pending attack for God Mode check
-        const fakeThreat: PendingAttack = {
-          attackerId: playerId, targetId: other.id,
-          attackCardId: cardId, chainHistory: [],
-        };
-        if (otherStrategy.shouldPlayGodMode(state, other.id, fakeThreat)) {
-          state = applyGodMode(state, other.id);
-          noped = true;
-          break;
-        }
-      }
-      if (noped) continue;
-    }
-
     state = playSpecialtyCard(state, playerId, cardId);
   }
 
@@ -254,6 +245,23 @@ export function runTurn(state: GameState): GameState {
 
   const attackCard = playerStrategy.chooseAttackCard(state, playerId);
   if (attackCard && updatedPlayer.hand.includes(attackCard)) {
+    // ── Stop It window: can also be played right before an attack ──
+    let stopItPlayed = false;
+    for (const other of alivePlayers(state)) {
+      if (other.id === playerId) continue;
+      const otherStrategy = getStrategy(other.strategy);
+      if (otherStrategy.shouldPlayStopIt(state, other.id, playerId)) {
+        state = applyStopIt(state, other.id);
+        stopItPlayed = true;
+        break;
+      }
+    }
+    if (stopItPlayed) {
+      state = drawPhase(state, playerId);
+      state = endTurnPhase(state, playerId);
+      return advanceTurn(state);
+    }
+
     const targetId = playerStrategy.chooseAttackTarget(state, playerId);
     if (targetId >= 0) {
       // Remove attack card from hand
@@ -281,10 +289,10 @@ export function runTurn(state: GameState): GameState {
         }],
       };
 
-      // ── PHASE 2: Attack chain (shake window) ──
+      // ── PHASE 2: Attack chain (God Mode / Redirect / Wrong Goat) ──
       state = resolveAttackChain(state);
 
-      // ── PHASE 3: Resolve attack ──
+      // ── PHASE 3: Resolve attack (dice roll) ──
       if (state.pendingAttack && !state.isOver) {
         state = resolveAttack(state);
       }
@@ -308,11 +316,12 @@ function resolveAttackChain(state: GameState): GameState {
   if (!state.pendingAttack) return state;
 
   // Each iteration handles ONE reaction (redirect/wrong_goat changes target → re-evaluate).
-  // God Mode resolution terminates immediately to prevent chain loops.
-  const MAX_REDIRECTS = 6;
+  // God Mode resolution terminates immediately. No hard limit on chain length —
+  // only a generous safety cap to prevent infinite loops in edge cases.
+  const SAFETY_CAP = 100;
   let redirectCount = 0;
 
-  while (state.pendingAttack && !state.isOver && redirectCount < MAX_REDIRECTS) {
+  while (state.pendingAttack && !state.isOver && redirectCount < SAFETY_CAP) {
     const attack = state.pendingAttack;
 
     // Build reaction order: target first, clockwise (excl. attacker), attacker last

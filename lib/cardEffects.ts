@@ -431,12 +431,11 @@ export function applyTheSacrifice(state: GameState, playerId: number): GameState
     }
 
     case 'nuke': {
-      // All other players die — Insurance does NOT work
+      // ALL players die — including the one who played The Sacrifice.
+      // Insurance does NOT work against nuke. Always results in a draw.
       for (const p of alive) {
-        if (p.id !== playerId) {
-          state = applyDamage(state, p.id, 99, true);
-          if (state.isOver) break;
-        }
+        state = applyDamage(state, p.id, 99, true);
+        if (state.isOver) break;
       }
       break;
     }
@@ -485,9 +484,12 @@ export function applyBegger(state: GameState, playerId: number): GameState {
   const received: string[] = [];
   for (const other of alivePlayers(state)) {
     if (other.id === playerId || other.hand.length === 0) continue;
-    // Give the first card (strategy would choose, simplified to first)
-    const giveCard = other.hand[other.hand.length - 1];
-    state = updatePlayer(state, other.id, { hand: other.hand.slice(0, -1) });
+    // Each player gives a random card (they choose any card from their hand)
+    const giveIdx = Math.floor(Math.random() * other.hand.length);
+    const giveCard = other.hand[giveIdx];
+    const newHand = [...other.hand];
+    newHand.splice(giveIdx, 1);
+    state = updatePlayer(state, other.id, { hand: newHand });
     received.push(giveCard);
   }
 
