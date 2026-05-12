@@ -169,10 +169,10 @@ function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; 
             color: 'text-cyan-400',
           };
         case 'polacken':
+          // The actual list of drawn cards is rendered separately via the
+          // follow-up 'draw' event (so Mad Cow triggers appear in between).
           return {
-            text: event.cards && event.cards.length > 0
-              ? `🃏  ${actor} spelar **Polacken** och drar: **${cardList(event.cards)}**`
-              : `🃏  ${actor} spelar **Polacken** och drar 3 kort`,
+            text: `🃏  ${actor} spelar **Polacken** — drar 3 kort från leken`,
             color: 'text-teal-400',
           };
         case 'begger':
@@ -218,6 +218,14 @@ function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; 
     }
 
     case 'draw':
+      // Bulk-draw event (Polacken etc.) — list all cards that landed in hand
+      if (event.cards && event.cards.length > 0) {
+        return {
+          text: `📥  ${actorShort} får i handen: **${cardList(event.cards)}**`,
+          color: 'text-zinc-400',
+        };
+      }
+      // Single-card end-of-turn draw
       if (!event.cardId) return null;
       return {
         text: `📥  ${actorShort} drar: **${cardName(event.cardId)}**`,

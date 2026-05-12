@@ -30,30 +30,45 @@ function addEvent(state: GameState, event: Omit<GameEvent, 'turn'>): GameState {
 }
 
 function drawCards(state: GameState, playerId: number, count: number): { state: GameState; drawn: string[] } {
+  // Mad Cow is a trap that ALWAYS triggers on draw — never enters the hand,
+  // even when drawn via Polacken / Skinny Dipping / Sacrifice's draw_3 segment.
+  // We process cards one at a time so each Mad Cow triggers in sequence and
+  // the events appear in the natural order in the log.
   const drawn: string[] = [];
-  let deck = [...state.deck];
-  let discardPile = [...state.discardPile];
 
   for (let i = 0; i < count; i++) {
+    let deck = [...state.deck];
+    let discardPile = [...state.discardPile];
+
     if (deck.length === 0) {
       if (discardPile.length === 0) break;
       deck = shuffleArray(discardPile);
       discardPile = [];
     }
-    drawn.push(deck.shift()!);
+
+    const card = deck.shift()!;
+    state = { ...state, deck, discardPile };
+
+    if (card === 'mad_cow') {
+      // Trap → trigger immediately, then to discard. Do NOT add to hand or drawn.
+      state = applyMadCow(state, playerId);
+      state = { ...state, discardPile: [...state.discardPile, 'mad_cow'] };
+
+      // If the Mad Cow eliminated the drawing player or ended the game, stop.
+      const stillAlive = state.players.find(p => p.id === playerId && !p.isEliminated);
+      if (!stillAlive || state.isOver) break;
+    } else {
+      drawn.push(card);
+      state = {
+        ...state,
+        players: state.players.map(p =>
+          p.id === playerId ? { ...p, hand: [...p.hand, card] } : p
+        ),
+      };
+    }
   }
 
-  return {
-    state: {
-      ...state,
-      deck,
-      discardPile,
-      players: state.players.map(p =>
-        p.id === playerId ? { ...p, hand: [...p.hand, ...drawn] } : p
-      ),
-    },
-    drawn,
-  };
+  return { state, drawn };
 }
 
 function shuffleArray<T>(arr: T[]): T[] {
@@ -592,9 +607,16 @@ export function applyPolacken(state: GameState, playerId: number): GameState {
     hand: removeCardFromHand(player, 'polacken').hand,
     cardsPlayed: player.cardsPlayed + 1,
   });
+  // Log Polacken FIRST so any Mad Cow triggers from drawing appear as
+  // consequences after it, not before.
+  state = addEvent(state, { type: 'card_played', actorId: playerId, cardId: 'polacken' });
   const { state: afterDraw, drawn } = drawCards(state, playerId, 3);
   state = afterDraw;
-  state = addEvent(state, { type: 'card_played', actorId: playerId, cardId: 'polacken', cards: drawn });
+  // After all draws (and any Mad Cow triggers), summarise what actually
+  // landed in the hand.
+  if (drawn.length > 0) {
+    state = addEvent(state, { type: 'draw', actorId: playerId, cards: drawn });
+  }
   return state;
 }
 
