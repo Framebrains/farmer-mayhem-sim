@@ -11,13 +11,15 @@ import GameLogTab from '@/components/tabs/GameLogTab';
 import InsightsTab from '@/components/tabs/InsightsTab';
 import RulesTab from '@/components/tabs/RulesTab';
 import DecisivePlaysTab from '@/components/tabs/DecisivePlaysTab';
+import SynergiesTab from '@/components/tabs/SynergiesTab';
 
-type TabId = 'overview' | 'cards' | 'decisive' | 'strategy' | 'playercount' | 'redflags' | 'insights' | 'gamelog' | 'rules';
+type TabId = 'overview' | 'cards' | 'decisive' | 'synergies' | 'strategy' | 'playercount' | 'redflags' | 'insights' | 'gamelog' | 'rules';
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'overview', label: 'Översikt' },
   { id: 'cards', label: 'Kortstyrka' },
   { id: 'decisive', label: '🎯 Avgörande drag' },
+  { id: 'synergies', label: '🔗 Kombinationer' },
   { id: 'strategy', label: 'Strategianalys' },
   { id: 'playercount', label: 'Spelarantal' },
   { id: 'redflags', label: 'Röda flaggor' },
@@ -74,6 +76,7 @@ export default function Dashboard({ stats }: DashboardProps) {
         {activeTab === 'overview' && <OverviewTab stats={stats} />}
         {activeTab === 'cards' && <CardPowerTab stats={stats} />}
         {activeTab === 'decisive' && <DecisivePlaysTab stats={stats} />}
+        {activeTab === 'synergies' && <SynergiesTab stats={stats} />}
         {activeTab === 'strategy' && <StrategyTab stats={stats} />}
         {activeTab === 'playercount' && (
           <PlayerCountTab

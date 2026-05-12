@@ -1,4 +1,4 @@
-import { SingleGameResult, SimConfig, SimulationStats, CardStat, Strategy } from './types';
+import { SingleGameResult, SimConfig, SimulationStats, CardStat, CardPairStat, Strategy } from './types';
 import { CARD_DATABASE } from './cardDatabase';
 import { detectRedFlags } from './redFlagDetector';
 
@@ -28,6 +28,10 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
   // ── Game length ──────────────────────────────────────────
   const turns = results.map(r => r.turnsPlayed);
   const avgTurns = mean(turns);
+  // Sample standard deviation (Bessel's correction: divide by n-1)
+  const turnsStdDev = turns.length > 1
+    ? Math.sqrt(turns.reduce((acc, t) => acc + (t - avgTurns) ** 2, 0) / (turns.length - 1))
+    : 0;
   const minTurns = Math.min(...turns);
   const maxTurns = Math.max(...turns);
   const avgMinutes = avgTurns * (35 / 60);
@@ -88,6 +92,14 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
   const playerWins: Record<string, number> = {};        // subset where player won
   const totalPlays: Record<string, number> = {};        // raw event count
 
+  // ── Pair tracking for synergy analysis ──
+  // For each (player, game) pair, generate all unordered pairs of used cards
+  // and count how often each pair appears together and how often that resulted
+  // in a win. Pair key = "cardA|cardB" with cardA < cardB alphabetically.
+  const pairInstances = new Map<string, number>();
+  const pairWins = new Map<string, number>();
+  const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+
   for (const cardId of Object.keys(CARD_DATABASE)) {
     playerInstances[cardId] = 0;
     playerWins[cardId] = 0;
@@ -108,10 +120,21 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
     });
 
     for (const [playerId, cards] of usedByPlayer) {
-      for (const cardId of cards) {
+      const cardArr = Array.from(cards);
+      const won = r.winnerId === playerId;
+
+      // Solo card counters
+      for (const cardId of cardArr) {
         playerInstances[cardId]++;
-        if (r.winnerId === playerId) {
-          playerWins[cardId]++;
+        if (won) playerWins[cardId]++;
+      }
+
+      // Pair counters (skip trivial / self pairs)
+      for (let i = 0; i < cardArr.length; i++) {
+        for (let j = i + 1; j < cardArr.length; j++) {
+          const key = pairKey(cardArr[i], cardArr[j]);
+          pairInstances.set(key, (pairInstances.get(key) ?? 0) + 1);
+          if (won) pairWins.set(key, (pairWins.get(key) ?? 0) + 1);
         }
       }
     }
@@ -124,7 +147,9 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
   const cardsDealtPerGame = 7 * config.playerCount;
 
   const cardStats: Record<string, CardStat> = {};
+  const cardSmoothedWinRate: Record<string, number> = {};
   const expectedWinRate = 1 / config.playerCount;
+  const BAYES_ALPHA_SOLO = Math.max(20, totalGames * 0.1);
 
   for (const [cardId, cardDef] of Object.entries(CARD_DATABASE)) {
     if (cardDef.type === 'trap') continue;
@@ -154,10 +179,10 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
     //
     // Result: a rare card played 15 times with 10 wins (raw 67%) →
     //   α=20: smoothed = (10 + 20×0.33) / (15+20) = 16.7/35 = 47.7% ≈ balanced ✓
-    const BAYES_ALPHA = Math.max(20, totalGames * 0.1);
-    const smoothedWins = wins + BAYES_ALPHA * expectedWinRate;
-    const smoothedInstances = instances + BAYES_ALPHA;
+    const smoothedWins = wins + BAYES_ALPHA_SOLO * expectedWinRate;
+    const smoothedInstances = instances + BAYES_ALPHA_SOLO;
     const smoothedWinRate = smoothedInstances > 0 ? smoothedWins / smoothedInstances : expectedWinRate;
+    cardSmoothedWinRate[cardId] = smoothedWinRate;
 
     // Normalise: 0.5 = expected, 1.0 = 2× expected, 0 = never wins
     const winCorrelation = instances > 0
@@ -174,6 +199,56 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
       rawWinRate,
       instanceCount: instances,
       avgTimesPerGame: plays / totalGames,
+    };
+  }
+
+  // ── Card-pair synergy analysis ─────────────────────────────
+  //
+  // For each pair of cards (A, B):
+  //   smoothedPairWinRate = (wins + α*E) / (instances + α)
+  //   synergy             = smoothedPairWinRate / max(soloA, soloB)
+  //
+  // synergy > 1.0 means playing BOTH wins more than the strongest one alone,
+  //   i.e. real positive synergy. synergy < 1.0 means the pair is redundant
+  //   or anti-synergistic. We use max(solo) as the benchmark (not sum) because
+  //   the question is "does adding B help beyond just playing A?".
+  //
+  // We filter trap/auto cards (they aren't player decisions) and use a lower
+  // BAYES_ALPHA than for solo because pairs are inherently rarer.
+
+  const BAYES_ALPHA_PAIR = Math.max(10, totalGames * 0.05);
+  const cardSynergies: Record<string, CardPairStat> = {};
+  const validCardIds = new Set(
+    Object.entries(CARD_DATABASE)
+      .filter(([, def]) => def.type !== 'trap' && def.timing !== 'automatic')
+      .map(([id]) => id)
+  );
+
+  for (const [key, instances] of pairInstances) {
+    const [a, b] = key.split('|');
+    if (!validCardIds.has(a) || !validCardIds.has(b)) continue;
+
+    const wins = pairWins.get(key) ?? 0;
+    const smoothedPairWins = wins + BAYES_ALPHA_PAIR * expectedWinRate;
+    const smoothedPairInstances = instances + BAYES_ALPHA_PAIR;
+    const smoothedPairRate = smoothedPairInstances > 0
+      ? smoothedPairWins / smoothedPairInstances
+      : expectedWinRate;
+
+    const soloA = cardSmoothedWinRate[a] ?? expectedWinRate;
+    const soloB = cardSmoothedWinRate[b] ?? expectedWinRate;
+    const bestSolo = Math.max(soloA, soloB, expectedWinRate); // floor at expected
+    const synergy = smoothedPairRate / bestSolo;
+
+    cardSynergies[key] = {
+      cardA: a,
+      cardB: b,
+      instances,
+      wins,
+      smoothedWinRate: smoothedPairRate,
+      soloA,
+      soloB,
+      synergy,
     };
   }
 
@@ -251,6 +326,7 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
     playerCount: config.playerCount,
     deckConfig: config.deckConfig,
     avgTurns,
+    turnsStdDev,
     minTurns,
     maxTurns,
     avgMinutes,
@@ -263,6 +339,7 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
     cardStats,
     killingBlowCounts,
     drawCauses: { timeout: drawTimeout, nuke: drawNuke },
+    cardSynergies,
     redFlags: [],
   };
 

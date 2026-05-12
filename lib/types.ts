@@ -136,6 +136,8 @@ export interface SimulationStats {
   deckConfig: DeckConfig;
 
   avgTurns: number;
+  /** Sample standard deviation of turnsPlayed across all games */
+  turnsStdDev: number;
   minTurns: number;
   maxTurns: number;
   avgMinutes: number;
@@ -154,9 +156,32 @@ export interface SimulationStats {
   /** Why draws happened: game reached max turns vs. The Sacrifice nuke */
   drawCauses: { timeout: number; nuke: number };
 
+  /** Pair-level synergy / anti-synergy. Key = "cardA|cardB" (sorted alphabetically). */
+  cardSynergies: Record<string, CardPairStat>;
+
   redFlags: RedFlag[];
 
   sampleGame?: SingleGameResult;
+}
+
+export interface CardPairStat {
+  cardA: string;
+  cardB: string;
+  /** Number of (player, game) pairs where the player used BOTH cards */
+  instances: number;
+  /** Of those, how many resulted in the player winning */
+  wins: number;
+  /** Bayesian-smoothed observed win rate when both cards are played */
+  smoothedWinRate: number;
+  /** Smoothed solo win rate of each card individually */
+  soloA: number;
+  soloB: number;
+  /**
+   * Synergy ratio. >1.0 means the pair wins MORE than the best individual card
+   * (true synergy). <1.0 means the pair wins LESS (anti-synergy / redundancy).
+   * 1.0 = pair performs exactly as well as its strongest component alone.
+   */
+  synergy: number;
 }
 
 export interface CardStat {
