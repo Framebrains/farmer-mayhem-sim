@@ -56,8 +56,10 @@ function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; 
       };
 
     case 'attack_hit':
+      // Just announce the hit — actual damage / absorption is logged by the
+      // follow-up player_damaged or senile_grandma event so we don't double-state it.
       return {
-        text: `🎲  Tärning: ${event.diceRoll} — TRÄFF! ${target} tar 1 HP i skada`,
+        text: `🎯  Tärning: ${event.diceRoll} — TRÄFF! Attacken når ${target}`,
         color: 'text-red-400',
       };
 
@@ -83,7 +85,10 @@ function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; 
     }
 
     case 'player_damaged':
-      return null; // already shown via attack_hit
+      return {
+        text: `💔  ${actor} tar 1 HP i skada`,
+        color: 'text-red-400',
+      };
 
     case 'player_eliminated':
       return {
@@ -98,14 +103,18 @@ function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; 
       };
 
     case 'mad_cow_triggered':
+      // drawPhase logs a first mad_cow_triggered with no diceRoll (the draw),
+      // then applyMadCow logs a second one WITH the diceRoll. Skip the first
+      // to avoid showing "Tärning: undefined — jämnt, säker!".
+      if (event.diceRoll === undefined) return null;
       return {
-        text: `🐄  ${actor} drog **Mad Cow**! Tärning: ${event.diceRoll}${event.diceRoll && event.diceRoll % 2 !== 0 ? ' — ojämnt, tar 1 HP skada' : ' — jämnt, säker!'}`,
+        text: `🐄  ${actor} drog **Mad Cow**! Tärning: ${event.diceRoll} — ${event.diceRoll % 2 !== 0 ? 'ojämnt!' : 'jämnt, säker!'}`,
         color: 'text-orange-400',
       };
 
     case 'haunted_barn_triggered':
       return {
-        text: `👻  **Haunted Barn** aktiveras på ${actor}s gård (< 2 kort på hand) — tar 1 HP skada`,
+        text: `👻  **Haunted Barn** aktiveras på ${actor}s gård (< 2 kort på hand)`,
         color: 'text-red-400',
       };
 
@@ -126,6 +135,15 @@ function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; 
             color: 'text-purple-300',
           };
         case 'senile_grandma':
+          // Same event type is used both when a player PLACES Grandma on their farm
+          // (own turn) AND when Grandma triggers to absorb incoming damage. The
+          // 'Grandma absorbed damage' detail flag distinguishes the two cases.
+          if (event.detail === 'Grandma absorbed damage') {
+            return {
+              text: `🛡️  **Senile Grandma** räddar ${actor} — absorberar attacken och försvinner!`,
+              color: 'text-green-400',
+            };
+          }
           return {
             text: `👵  ${actor} placerar **Senile Grandma** på sin egen gård (absorberar nästa attack)`,
             color: 'text-green-400',
