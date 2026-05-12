@@ -94,6 +94,7 @@ export type GameEventType =
   | 'attack_missed'
   | 'attack_noped'
   | 'attack_redirected'
+  | 'dice_rolled'        // pre-Adrenaline dice result (so log shows initial roll before reroll)
   | 'card_played'
   | 'player_damaged'
   | 'player_eliminated'

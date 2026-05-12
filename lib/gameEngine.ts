@@ -477,14 +477,30 @@ function resolveAttack(state: GameState): GameState {
   const attack = state.pendingAttack!;
   if (!attack) return state;
 
+  // 1. ROLL THE DICE. The dice must be rolled first — Adrenaline is a
+  //    reaction to seeing the result, not played proactively.
   let diceRoll = rollDice();
 
-  // Check Adrenaline from all players
+  // 2. Offer the reroll: any alive player whose strategy reacts to the
+  //    visible roll can play Adrenaline to force a reroll.
   const alive = alivePlayers(state);
   for (const player of alive) {
     if (state.isOver) break;
     const strategy = getStrategy(player.strategy);
     if (strategy.shouldPlayAdrenaline(state, player.id, attack, diceRoll)) {
+      // Log the INITIAL roll first so the log reads chronologically:
+      //   "Tärning: 5 — TRÄFF" → "Adrenaline! Kräver omkast" → "Tärning: 1 — Miss"
+      state = {
+        ...state,
+        events: [...state.events, {
+          turn: state.turnNumber,
+          type: 'dice_rolled',
+          actorId: attack.attackerId,
+          targetId: attack.targetId,
+          cardId: attack.attackCardId,
+          diceRoll,
+        }],
+      };
       const result = applyAdrenaline(state, player.id);
       state = result.state;
       diceRoll = result.newRoll;
@@ -492,6 +508,7 @@ function resolveAttack(state: GameState): GameState {
     }
   }
 
+  // 3. Apply damage based on the final (possibly rerolled) value
   state = applyAttackDamage(state, attack.attackerId, attack.targetId, attack.attackCardId, diceRoll);
   state = {
     ...state,

@@ -65,6 +65,17 @@ function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; 
         color: 'text-red-400',
       };
 
+    case 'dice_rolled': {
+      // Pre-reroll dice result (emitted only when Adrenaline is about to trigger).
+      // The follow-up attack_hit/attack_missed shows the FINAL roll after reroll.
+      const threshold = event.cardId === 'c4_goat' ? 3 : event.cardId === 'milking_cow' ? 4 : 5;
+      const wouldHit = (event.diceRoll ?? 0) >= threshold;
+      return {
+        text: `🎲  Tärning: **${event.diceRoll}** — ${wouldHit ? 'skulle träffat' : 'skulle missat'} (innan reroll)`,
+        color: 'text-zinc-400',
+      };
+    }
+
     case 'attack_missed':
       return {
         text: `🎲  Tärning: ${event.diceRoll} — Miss, ingen skada`,
@@ -165,11 +176,24 @@ function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; 
             text: `🌙  ${actor} byter hela handen med ${target} (**Moonshine Night**)`,
             color: 'text-indigo-300',
           };
-        case 'skinny_dipping':
+        case 'skinny_dipping': {
+          // Detail format: "challengerRoll:targetRoll:winnerId"
+          const parts = (event.detail ?? '').split(':');
+          if (parts.length === 3) {
+            const cRoll = parts[0];
+            const tRoll = parts[1];
+            const winId = parseInt(parts[2], 10);
+            const winLabel = pName(game, winId);
+            return {
+              text: `🎲  ${actor} utmanar ${target} i tärningsduel (**Skinny Dipping**) — ${actorShort} slog **${cRoll}**, ${pName(game, event.targetId ?? -1)} slog **${tRoll}** → ${winLabel} vinner och drar 2 kort`,
+              color: 'text-cyan-400',
+            };
+          }
           return {
             text: `🎲  ${actor} utmanar ${target} i tärningsduel (**Skinny Dipping**) — vinnaren drar 2 kort`,
             color: 'text-cyan-400',
           };
+        }
         case 'polacken':
           // The actual list of drawn cards is rendered separately via the
           // follow-up 'draw' event (so Mad Cow triggers appear in between).
@@ -211,6 +235,11 @@ function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; 
           };
         case 'god_mode':
           return null; // shown via attack_noped
+        case 'adrenaline':
+          return {
+            text: `💉  ${actor} spelar **Adrenaline** — kräver omkast!`,
+            color: 'text-pink-400',
+          };
         default:
           return {
             text: `🃏  ${actor} spelar **${cardName(cid)}**`,
@@ -467,6 +496,37 @@ function GameLog({ game }: { game: SingleGameResult }) {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Card-pill colour legend */}
+      <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-4">
+        <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-3">Färgkodning av kort</h4>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center rounded-full border bg-red-900/50 text-red-200 border-red-800 px-2 py-0.5 text-[10px] font-medium">C4-Goat</span>
+            <span className="text-zinc-400">Attackkort</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center rounded-full border bg-blue-900/70 text-blue-200 border-blue-700 px-2 py-0.5 text-[10px] font-medium">God Mode</span>
+            <span className="text-zinc-400">Reaktivt (any-time)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center rounded-full border bg-teal-900/50 text-teal-200 border-teal-800 px-2 py-0.5 text-[10px] font-medium">Polacken</span>
+            <span className="text-zinc-400">Specialkort (egen tur)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center rounded-full border bg-amber-900/50 text-amber-200 border-amber-800 px-2 py-0.5 text-[10px] font-medium">Senile Grandma</span>
+            <span className="text-zinc-400">Stationärt (gård)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center rounded-full border bg-emerald-900/60 text-emerald-200 border-emerald-700 px-2 py-0.5 text-[10px] font-medium">Insurance</span>
+            <span className="text-zinc-400">Auto-triggar vid död</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-zinc-500 font-mono">×3</span>
+            <span className="text-zinc-400">Antal av samma kort</span>
+          </div>
+        </div>
       </div>
 
       {/* Final HP */}

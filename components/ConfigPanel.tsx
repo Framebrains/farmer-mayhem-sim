@@ -1,6 +1,7 @@
 'use client';
 
-import { SimConfig, Strategy, DeckConfig } from '@/lib/types';
+import { useState } from 'react';
+import { SimConfig, Strategy } from '@/lib/types';
 import { CARD_DATABASE } from '@/lib/cardDatabase';
 
 interface ConfigPanelProps {
@@ -23,9 +24,34 @@ const STRATEGY_LABELS: Record<Strategy, string> = {
 const PLAYER_COUNTS = [2, 3, 4, 5, 6];
 const SIM_COUNTS = [100, 1000, 5000, 10000];
 
-const NON_TRAP_CARDS = Object.values(CARD_DATABASE).filter(c => c.type !== 'trap');
+// ALL cards — including traps (Mad Cow). Traps don't go to hands, but they
+// ARE shuffled into the deck and we should let the user configure them.
+const ALL_CARDS = Object.values(CARD_DATABASE);
+
+// Group cards by their role so the expanded view can show columns
+const CARD_GROUPS = [
+  { id: 'attack', label: 'Attackkort', color: 'text-red-300' },
+  { id: 'reactive', label: 'Reaktiva (any-time)', color: 'text-blue-300' },
+  { id: 'specialty', label: 'Specialkort (egen tur)', color: 'text-teal-300' },
+  { id: 'stationary', label: 'Stationära (gård)', color: 'text-amber-300' },
+  { id: 'auto', label: 'Auto / Insurance', color: 'text-emerald-300' },
+  { id: 'trap', label: 'Trapp / Husekort', color: 'text-purple-300' },
+];
+
+function cardGroup(cardId: string): string {
+  const def = CARD_DATABASE[cardId];
+  if (!def) return 'specialty';
+  if (def.type === 'attack') return 'attack';
+  if (def.type === 'trap') return 'trap';
+  if (def.type === 'stationary') return 'stationary';
+  if (def.timing === 'any_time') return 'reactive';
+  if (def.timing === 'automatic') return 'auto';
+  return 'specialty';
+}
 
 export default function ConfigPanel({ config, onChange, onRun, isRunning, progress }: ConfigPanelProps) {
+  const [showDeckModal, setShowDeckModal] = useState(false);
+
   function setPlayerCount(n: number) {
     const strategies = Array.from({ length: n }, (_, i) => config.strategies[i] || 'balanced');
     onChange({ ...config, playerCount: n, strategies });
@@ -54,6 +80,11 @@ export default function ConfigPanel({ config, onChange, onRun, isRunning, progre
 
   const getCardCount = (cardId: string) =>
     config.deckConfig.overrides[cardId] ?? CARD_DATABASE[cardId]?.count ?? 0;
+
+  // Total deck size (sum of all card counts, including traps)
+  const totalCards = ALL_CARDS.reduce((sum, c) => sum + getCardCount(c.id), 0);
+  const defaultTotal = ALL_CARDS.reduce((sum, c) => sum + c.count, 0);
+  const totalDiff = totalCards - defaultTotal;
 
   return (
     <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 space-y-6">
@@ -126,55 +157,36 @@ export default function ConfigPanel({ config, onChange, onRun, isRunning, progre
         </div>
       </div>
 
-      {/* Deck configuration */}
-      <details className="group">
-        <summary className="text-sm font-medium text-zinc-400 cursor-pointer select-none hover:text-zinc-200 transition-colors flex items-center gap-2">
-          <span className="group-open:rotate-90 transition-transform inline-block">▶</span>
-          Kortlekkonfiguration
+      {/* Deck configuration — compact summary + open fullscreen button */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm font-medium text-zinc-400">Kortlekkonfiguration</p>
           {Object.keys(config.deckConfig.overrides).length > 0 && (
-            <span className="bg-orange-600 text-white text-xs px-2 py-0.5 rounded-full ml-1">
+            <span className="bg-orange-600 text-white text-[10px] px-1.5 py-0.5 rounded-full">
               {Object.keys(config.deckConfig.overrides).length} ändrade
             </span>
           )}
-        </summary>
-        <div className="mt-3 space-y-2 max-h-64 overflow-y-auto pr-2">
-          {NON_TRAP_CARDS.map(card => {
-            const count = getCardCount(card.id);
-            const isModified = card.id in config.deckConfig.overrides;
-            return (
-              <div key={card.id} className="flex items-center gap-3">
-                <span className={`text-sm flex-1 ${isModified ? 'text-orange-400' : 'text-zinc-300'}`}>
-                  {card.name}
-                </span>
-                <span className="text-xs text-zinc-500 w-16 text-right">
-                  standard: {card.count}
-                </span>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setCardCount(card.id, Math.max(0, count - 1))}
-                    className="w-6 h-6 bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-300 text-sm font-bold"
-                  >
-                    −
-                  </button>
-                  <span className="w-6 text-center text-white text-sm font-mono">{count}</span>
-                  <button
-                    onClick={() => setCardCount(card.id, count + 1)}
-                    className="w-6 h-6 bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-300 text-sm font-bold"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-            );
-          })}
         </div>
-        <button
-          onClick={resetDeck}
-          className="mt-3 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-        >
-          Återställ standardlek
-        </button>
-      </details>
+        <div className="bg-zinc-800/60 border border-zinc-700 rounded-lg p-3 space-y-2">
+          <div className="flex items-baseline justify-between">
+            <span className="text-xs text-zinc-500">Totalt antal kort i leken</span>
+            <span className="font-mono font-bold text-white">
+              {totalCards}
+              {totalDiff !== 0 && (
+                <span className={`text-xs ml-1 ${totalDiff > 0 ? 'text-orange-400' : 'text-blue-400'}`}>
+                  ({totalDiff > 0 ? '+' : ''}{totalDiff} mot standard {defaultTotal})
+                </span>
+              )}
+            </span>
+          </div>
+          <button
+            onClick={() => setShowDeckModal(true)}
+            className="w-full text-xs font-medium bg-zinc-700 hover:bg-zinc-600 text-zinc-100 py-2 rounded-md transition-colors"
+          >
+            🔍 Öppna full kortlekredigerare
+          </button>
+        </div>
+      </div>
 
       {/* Run button + progress */}
       <div className="space-y-3">
@@ -205,6 +217,115 @@ export default function ConfigPanel({ config, onChange, onRun, isRunning, progre
           </div>
         )}
       </div>
+
+      {/* ──────── DECK CONFIG MODAL ──────── */}
+      {showDeckModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setShowDeckModal(false)}
+        >
+          <div
+            className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-zinc-700 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-white">Kortlekredigerare</h2>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Justera antalet av varje kort. <strong className="text-zinc-300">Trappkort</strong> (Mad Cow) ligger i leken men kommer aldrig in i en spelarhand.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowDeckModal(false)}
+                className="text-zinc-400 hover:text-white text-2xl leading-none px-2"
+                aria-label="Stäng"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Total count banner */}
+            <div className="px-6 py-3 bg-zinc-800/60 border-b border-zinc-700 flex items-baseline justify-between">
+              <span className="text-sm text-zinc-300">Totalt antal kort i leken:</span>
+              <div className="flex items-baseline gap-3">
+                <span className="text-2xl font-mono font-bold text-white">{totalCards}</span>
+                {totalDiff !== 0 ? (
+                  <span className={`text-xs font-medium ${totalDiff > 0 ? 'text-orange-400' : 'text-blue-400'}`}>
+                    {totalDiff > 0 ? '+' : ''}{totalDiff} mot standard ({defaultTotal})
+                  </span>
+                ) : (
+                  <span className="text-xs text-zinc-500">standardlek</span>
+                )}
+                <button
+                  onClick={resetDeck}
+                  className="text-xs text-zinc-400 hover:text-white underline ml-3"
+                >
+                  Återställ
+                </button>
+              </div>
+            </div>
+
+            {/* Card grid by group */}
+            <div className="px-6 py-4 overflow-y-auto flex-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-6">
+                {CARD_GROUPS.map(group => {
+                  const cardsInGroup = ALL_CARDS.filter(c => cardGroup(c.id) === group.id);
+                  if (cardsInGroup.length === 0) return null;
+                  const groupTotal = cardsInGroup.reduce((sum, c) => sum + getCardCount(c.id), 0);
+                  return (
+                    <div key={group.id} className="space-y-2">
+                      <div className="flex items-baseline justify-between border-b border-zinc-700 pb-1.5">
+                        <h3 className={`text-xs font-bold uppercase tracking-wide ${group.color}`}>
+                          {group.label}
+                        </h3>
+                        <span className="text-xs font-mono text-zinc-500">{groupTotal} kort</span>
+                      </div>
+                      {cardsInGroup.map(card => {
+                        const count = getCardCount(card.id);
+                        const isModified = card.id in config.deckConfig.overrides;
+                        const isTrap = card.type === 'trap';
+                        return (
+                          <div key={card.id} className="flex items-center gap-2">
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-sm font-medium truncate ${isModified ? 'text-orange-400' : 'text-zinc-200'}`}>
+                                {card.name}
+                                {isTrap && <span className="ml-1.5 text-[9px] bg-purple-900/60 text-purple-300 px-1 py-0.5 rounded">HUSKORT</span>}
+                              </p>
+                              <p className="text-[10px] text-zinc-500">standard: {card.count}</p>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => setCardCount(card.id, Math.max(0, count - 1))}
+                                className="w-7 h-7 bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-200 text-sm font-bold"
+                              >−</button>
+                              <span className="w-7 text-center text-white text-sm font-mono font-bold">{count}</span>
+                              <button
+                                onClick={() => setCardCount(card.id, count + 1)}
+                                className="w-7 h-7 bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-200 text-sm font-bold"
+                              >+</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-3 border-t border-zinc-700 flex items-center justify-end gap-2 bg-zinc-900/50">
+              <button
+                onClick={() => setShowDeckModal(false)}
+                className="text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-md transition-colors"
+              >
+                Stäng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -261,15 +261,19 @@ export function applyRedirect(state: GameState, playerId: number, newTargetId: n
 
 // ─── ADRENALINE ─────────────────────────────────────────────
 
-/** Play adrenaline to reroll a dice */
+/** Play adrenaline to force a reroll. The original roller (the attacker)
+ *  rolls a NEW die — that becomes the final value used for hit/miss. */
 export function applyAdrenaline(state: GameState, playerId: number): { state: GameState; newRoll: number } {
   const player = state.players.find(p => p.id === playerId)!;
   state = updatePlayer(state, playerId, {
     hand: removeCardFromHand(player, 'adrenaline').hand,
     cardsPlayed: player.cardsPlayed + 1,
   });
+  // The card_played event announces the reroll demand. The actual new roll
+  // is recorded on the follow-up attack_hit/attack_missed event so we never
+  // duplicate dice values across two messages.
+  state = addEvent(state, { type: 'card_played', actorId: playerId, cardId: 'adrenaline', detail: 'reroll' });
   const newRoll = rollDice();
-  state = addEvent(state, { type: 'card_played', actorId: playerId, cardId: 'adrenaline', diceRoll: newRoll });
   return { state, newRoll };
 }
 
@@ -326,8 +330,21 @@ export function applySkinnyDipping(state: GameState, playerId: number, targetId:
   }
 
   const winnerId = playerRoll > targetRoll ? playerId : targetId;
-  ({ state } = drawCards(state, winnerId, 2));
-  state = addEvent(state, { type: 'card_played', actorId: playerId, targetId, cardId: 'skinny_dipping', detail: `Player ${winnerId} won the duel` });
+  // Encode the full duel result in the detail so the log can show it.
+  // Format: "challengerRoll:targetRoll:winnerId"
+  state = addEvent(state, {
+    type: 'card_played',
+    actorId: playerId,
+    targetId,
+    cardId: 'skinny_dipping',
+    detail: `${playerRoll}:${targetRoll}:${winnerId}`,
+  });
+  // Draw 2 for the winner, then log what they actually got (Mad Cows triggered inline)
+  const { state: afterDraw, drawn } = drawCards(state, winnerId, 2);
+  state = afterDraw;
+  if (drawn.length > 0) {
+    state = addEvent(state, { type: 'draw', actorId: winnerId, cards: drawn });
+  }
   return state;
 }
 
