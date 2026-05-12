@@ -24,8 +24,15 @@ export default function Home() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Hydrate user-defined custom cards into CARD_DATABASE on mount
-  useEffect(() => { mergeCustomCards(); }, []);
+  // Hydrate user-defined custom cards and built-in overrides from localStorage
+  // into CARD_DATABASE on mount. We track hydration in state so that setting
+  // it to true triggers a re-render of the children (ConfigPanel) — otherwise
+  // the panel would render once with the un-merged DB and never refresh.
+  const [cardsHydrated, setCardsHydrated] = useState(false);
+  useEffect(() => {
+    mergeCustomCards();
+    setCardsHydrated(true);
+  }, []);
 
   const handleRun = useCallback(async () => {
     if (isRunning) return;
@@ -70,9 +77,12 @@ export default function Home() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-6 items-start">
-          {/* Left: config */}
+          {/* Left: config — key forces a fresh render once custom cards
+              have been hydrated from localStorage so the deck editor
+              picks them up immediately. */}
           <div className="lg:sticky lg:top-6">
             <ConfigPanel
+              key={cardsHydrated ? 'hydrated' : 'pending'}
               config={config}
               onChange={setConfig}
               onRun={handleRun}

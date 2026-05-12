@@ -1,11 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { SimConfig, Strategy, CardDefinition, CardEffect, CardType } from '@/lib/types';
 import {
   CARD_DATABASE, registerCustomCard, unregisterCustomCard,
   loadCustomCards, saveCustomCards,
-  applyOverride,
+  applyOverride, mergeCustomCards,
 } from '@/lib/cardDatabase';
 
 interface ConfigPanelProps {
@@ -67,6 +67,15 @@ export default function ConfigPanel({ config, onChange, onRun, isRunning, progre
   // Bumping this re-renders the panel after a custom card is added/removed
   // so the deck list reflects new entries from CARD_DATABASE.
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // Belt-and-suspenders: ensure custom cards & built-in overrides are loaded
+  // from localStorage even if the page-level hydration somehow misses us.
+  // mergeCustomCards() is idempotent so re-running is safe.
+  useEffect(() => {
+    mergeCustomCards();
+    setRefreshKey(k => k + 1);
+  }, []);
+
   const ALL_CARDS = Object.values(CARD_DATABASE);
   void refreshKey;
 
