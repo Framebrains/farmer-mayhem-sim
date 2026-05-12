@@ -199,10 +199,18 @@ function playSpecialtyCard(state: GameState, playerId: number, cardId: string): 
       return applyHauntedBarn(state, playerId, targetId);
     }
     default: {
-      // Unknown built-in id → check if it's a custom card and dispatch by template
+      // Unknown built-in id → check if it's a custom card and dispatch
       const def = CARD_DATABASE[cardId];
       if (def?.isCustom) {
-        return applyCustomSpecialtyCard(state, playerId, cardId);
+        // If any effect targets 'chosen', ask the strategy for a target
+        const needsTarget = def.effects?.some(e =>
+          e.target === 'chosen'
+        ) ?? false;
+        const targetId = needsTarget
+          ? strategy.chooseTargetForCard(state, playerId, cardId)
+          : -1;
+        if (needsTarget && targetId < 0) return state;
+        return applyCustomSpecialtyCard(state, playerId, cardId, needsTarget ? targetId : undefined);
       }
       return state;
     }

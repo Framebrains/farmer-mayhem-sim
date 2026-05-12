@@ -18,15 +18,33 @@ function bestAttackInHand(hand: string[]): string | null {
   return attacks[0] ?? null;
 }
 
-/** Find any custom cards in hand that match a given template. */
-function customsByTemplate(hand: string[], template: 'attack' | 'heal' | 'draw'): string[] {
+/** Find custom SPECIALTY cards in hand whose effects include a given kind.
+ *  (Attack-type customs are handled via chooseAttackCard / bestAttackInHand.) */
+function customsWithEffect(hand: string[], kind: 'heal' | 'draw' | 'discard' | 'steal'): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const c of hand) {
     if (seen.has(c)) continue;
     seen.add(c);
     const def = CARD_DATABASE[c];
-    if (def?.isCustom && def.template === template) out.push(c);
+    if (!def?.isCustom || def.type === 'attack' || !def.effects) continue;
+    if (def.effects.some(e => e.kind === kind)) out.push(c);
+  }
+  return out;
+}
+
+/** Any custom specialty card with effects (catch-all for cards that don't
+ *  match the heal/draw heuristic — e.g. a "discard target's hand" disruptor). */
+function customSpecialtiesInHand(hand: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const c of hand) {
+    if (seen.has(c)) continue;
+    seen.add(c);
+    const def = CARD_DATABASE[c];
+    if (def?.isCustom && def.type !== 'attack' && def.effects && def.effects.length > 0) {
+      out.push(c);
+    }
   }
   return out;
 }
@@ -300,20 +318,30 @@ const expert: StrategyFunctions = {
     }
     if (cards.length === 0 && player.hand.includes('blottaren')) cards.push('blottaren');
 
-    // CUSTOM CARDS: heal/draw templates handled by sensible defaults.
-    //   heal → play when wounded (HP < 2)
-    //   draw → play when hand is small (≤ 5)
-    for (const cardId of customsByTemplate(player.hand, 'heal')) {
+    // CUSTOM CARDS: play based on effect signature.
+    //   heal → when wounded
+    //   draw → when hand is small
+    //   steal/discard → when opponents have hands worth disrupting
+    //   catch-all → fall back to "play it" if not classified above
+    for (const cardId of customsWithEffect(player.hand, 'heal')) {
       if (player.hp < 2) cards.push(cardId);
     }
-    for (const cardId of customsByTemplate(player.hand, 'draw')) {
+    for (const cardId of customsWithEffect(player.hand, 'draw')) {
       if (player.hand.length <= 5) cards.push(cardId);
+    }
+    for (const cardId of customsWithEffect(player.hand, 'steal')) {
+      if (others.some(o => o.hand.length >= 4)) cards.push(cardId);
+    }
+    for (const cardId of customsWithEffect(player.hand, 'discard')) {
+      if (others.some(o => o.hand.length >= 3)) cards.push(cardId);
+    }
+    // Catch-all: play any unclassified custom specialty (e.g. self-only effects)
+    for (const cardId of customSpecialtiesInHand(player.hand)) {
+      if (!cards.includes(cardId)) cards.push(cardId);
     }
 
     // No artificial pacing cap — real players play as many specialty cards
-    // as they need to. The priority gates above naturally produce 1–2 cards
-    // most turns, but in panic situations (1 HP, multiple defensive plays)
-    // a player will reasonably play 3+ cards to survive.
+    // as they need to.
     return [...new Set(cards)];
   },
 
@@ -494,10 +522,10 @@ const aggressive: StrategyFunctions = {
     if (cards.length === 0 && player.hand.includes('blottaren')) cards.push('blottaren');
 
     // Custom heal/draw — aggressive uses them eagerly
-    for (const cardId of customsByTemplate(player.hand, 'heal')) {
+    for (const cardId of customsWithEffect(player.hand, 'heal')) {
       if (player.hp < 2) cards.push(cardId);
     }
-    for (const cardId of customsByTemplate(player.hand, 'draw')) {
+    for (const cardId of customsWithEffect(player.hand, 'draw')) {
       if (player.hand.length <= 6) cards.push(cardId);
     }
 
@@ -652,10 +680,10 @@ const defensive: StrategyFunctions = {
     if (player.hp === 1 && player.hand.includes('the_sacrifice')) cards.push('the_sacrifice');
 
     // Custom heal/draw — defensive uses heal even more eagerly, draw conservatively
-    for (const cardId of customsByTemplate(player.hand, 'heal')) {
+    for (const cardId of customsWithEffect(player.hand, 'heal')) {
       if (player.hp < 2) cards.push(cardId);
     }
-    for (const cardId of customsByTemplate(player.hand, 'draw')) {
+    for (const cardId of customsWithEffect(player.hand, 'draw')) {
       if (player.hand.length <= 5) cards.push(cardId);
     }
 

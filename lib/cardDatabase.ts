@@ -1,4 +1,4 @@
-import { CardDefinition } from './types';
+import { CardDefinition, CardEffect } from './types';
 
 /**
  * Complete card database for Farmer Mayhem.
@@ -175,25 +175,37 @@ export function hitThresholdFor(cardId: string): number | null {
   const built = ATTACK_HIT_THRESHOLD[cardId];
   if (built) return built;
   const def = CARD_DATABASE[cardId];
-  if (def?.template === 'attack' && def.hitThreshold) return def.hitThreshold;
+  if (def?.type === 'attack' && def.hitThreshold) return def.hitThreshold;
   return null;
 }
 
-/** Look up the damage value for any attack card (built-in = 1, custom can vary). */
+/** Look up the on-hit damage value for any attack card.
+ *  Reads the FIRST damage effect's amount on custom cards; defaults to 1. */
 export function damageFor(cardId: string): number {
   const def = CARD_DATABASE[cardId];
-  if (def?.template === 'attack' && def.damage) return def.damage;
+  if (def?.isCustom && def.effects) {
+    const dmg = def.effects.find(e => e.kind === 'damage');
+    if (dmg && dmg.kind === 'damage') return dmg.amount;
+  }
   return 1;
 }
 
-// ─── CUSTOM CARDS ─────────────────────────────────────────
+// ─── CUSTOM CARDS & BUILT-IN OVERRIDES ────────────────────
 //
-// User-defined cards stored in localStorage. mergeCustomCards() is called
-// once at app startup (client-side) so the rest of the codebase can keep
-// reading CARD_DATABASE directly without caring whether a card is built-in
-// or user-created.
+// User-defined cards (`farmer_custom_cards`) and per-card edits to
+// built-in cards (`farmer_card_overrides` — currently just name and
+// description) are stored in localStorage. mergeCustomCards() is called
+// once at app startup (client-side) so the rest of the codebase can
+// keep reading CARD_DATABASE directly without caring whether a card is
+// built-in or user-created.
 
 const CUSTOM_CARDS_KEY = 'farmer_custom_cards';
+const CARD_OVERRIDES_KEY = 'farmer_card_overrides';
+
+export interface BuiltinOverride {
+  name?: string;
+  description?: string;
+}
 
 export function loadCustomCards(): Record<string, CardDefinition> {
   if (typeof window === 'undefined') return {};
@@ -215,9 +227,66 @@ export function saveCustomCards(cards: Record<string, CardDefinition>) {
   }
 }
 
+export function loadCardOverrides(): Record<string, BuiltinOverride> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(CARD_OVERRIDES_KEY);
+    if (raw) return JSON.parse(raw) as Record<string, BuiltinOverride>;
+  } catch { /* ignore */ }
+  return {};
+}
+
+export function saveCardOverrides(o: Record<string, BuiltinOverride>) {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(CARD_OVERRIDES_KEY, JSON.stringify(o)); } catch { /* ignore */ }
+}
+
+export function applyOverride(id: string, override: BuiltinOverride) {
+  const overrides = loadCardOverrides();
+  overrides[id] = { ...overrides[id], ...override };
+  saveCardOverrides(overrides);
+  const card = CARD_DATABASE[id];
+  if (card) {
+    if (override.name) card.name = override.name;
+    if (override.description !== undefined) card.description = override.description || undefined;
+  }
+}
+
+/**
+ * Migrate a legacy template-based custom card into the new effects format.
+ * Old format had: template: 'attack' | 'heal' | 'draw' + hitThreshold/damage/drawCount.
+ */
+function migrateLegacyCustom(card: CardDefinition): CardDefinition {
+  const legacy = card as CardDefinition & { template?: string; damage?: number; drawCount?: number };
+  if (card.effects || !legacy.template) return card;
+
+  let effects: CardEffect[] = [];
+  if (legacy.template === 'attack') {
+    effects = [{ kind: 'damage', target: 'chosen', amount: legacy.damage ?? 1 }];
+  } else if (legacy.template === 'heal') {
+    effects = [{ kind: 'heal', target: 'self', amount: 'max' }];
+  } else if (legacy.template === 'draw') {
+    effects = [{ kind: 'draw', target: 'self', count: legacy.drawCount ?? 2 }];
+  }
+  // Strip legacy fields by recreating without them
+  return {
+    id: card.id,
+    name: card.name,
+    type: card.type,
+    timing: card.timing,
+    count: card.count,
+    canBeNopedByGodMode: card.canBeNopedByGodMode,
+    description: card.description,
+    isCustom: true,
+    effects,
+    hitThreshold: card.hitThreshold,
+  };
+}
+
 /** Merge a custom card into CARD_DATABASE. Idempotent. */
 export function registerCustomCard(card: CardDefinition) {
-  CARD_DATABASE[card.id] = { ...card, isCustom: true };
+  const migrated = migrateLegacyCustom({ ...card, isCustom: true });
+  CARD_DATABASE[migrated.id] = migrated;
 }
 
 /** Remove a custom card by id (only allowed for cards marked isCustom). */
@@ -226,12 +295,30 @@ export function unregisterCustomCard(id: string) {
   if (def?.isCustom) delete CARD_DATABASE[id];
 }
 
-/** Hydrate all custom cards from localStorage into CARD_DATABASE. */
+/** Hydrate custom cards and built-in overrides from localStorage. */
 export function mergeCustomCards() {
-  const custom = loadCustomCards();
-  for (const id of Object.keys(custom)) {
-    registerCustomCard(custom[id]);
+  // 1. Built-in overrides (name/description tweaks)
+  const overrides = loadCardOverrides();
+  for (const [id, ov] of Object.entries(overrides)) {
+    const card = CARD_DATABASE[id];
+    if (!card) continue;
+    if (ov.name) card.name = ov.name;
+    if (ov.description !== undefined) card.description = ov.description || undefined;
   }
+
+  // 2. Custom cards (with migration for legacy template-based ones)
+  const custom = loadCustomCards();
+  let needsResave = false;
+  for (const id of Object.keys(custom)) {
+    const original = custom[id];
+    const migrated = migrateLegacyCustom({ ...original, isCustom: true });
+    if (migrated !== original) {
+      custom[id] = migrated;
+      needsResave = true;
+    }
+    CARD_DATABASE[id] = migrated;
+  }
+  if (needsResave) saveCustomCards(custom);
 }
 
 /** Dirty Devil wheel segments */

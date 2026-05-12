@@ -1,4 +1,4 @@
-import { GameState, PlayerState, GameEvent, StationarySlot, CardDefinition } from './types';
+import { GameState, PlayerState, GameEvent, StationarySlot, CardDefinition, CardEffect } from './types';
 import { CARD_DATABASE, hitThresholdFor, damageFor, spinWheel, WheelSegment } from './cardDatabase';
 
 // ─── HELPERS ────────────────────────────────────────────────
@@ -154,18 +154,31 @@ export function applyDamage(state: GameState, targetId: number, amount: number, 
 
 // ─── ATTACK EFFECTS ─────────────────────────────────────────
 
-/** Resolve an attack card's dice roll and apply damage if it hits. Works for
- *  both built-in attacks (c4/milking/unicorn) and custom 'attack'-template cards. */
+/** Resolve an attack card's dice roll. On hit: apply primary damage (legacy)
+ *  AND run any additional effects defined on the card (custom attacks).
+ *  Custom cards' 'damage' effect targeting 'chosen' is handled by the legacy
+ *  damage path so we skip it here to avoid double-damage. */
 export function applyAttackDamage(state: GameState, attackerId: number, targetId: number, attackCardId: string, diceRoll: number): GameState {
   const threshold = hitThresholdFor(attackCardId);
   if (threshold == null) return state;
   const damage = damageFor(attackCardId);
+  const def = CARD_DATABASE[attackCardId];
 
   if (diceRoll >= threshold) {
     state = addEvent(state, { type: 'attack_hit', actorId: attackerId, targetId, cardId: attackCardId, diceRoll });
     const attacker = state.players.find(p => p.id === attackerId)!;
     state = updatePlayer(state, attackerId, { damageDealt: attacker.damageDealt + damage });
     state = applyDamage(state, targetId, damage);
+
+    // For custom attack cards, run any NON-damage effects (heal, draw, etc.)
+    // so e.g. "Vampire Bite: deal 1 dmg + heal self 1 HP" works.
+    if (def?.isCustom && def.effects) {
+      for (const eff of def.effects) {
+        if (state.isOver) break;
+        if (eff.kind === 'damage' && eff.target === 'chosen') continue; // already handled
+        state = runEffect(state, attackerId, eff, targetId);
+      }
+    }
   } else {
     state = addEvent(state, { type: 'attack_missed', actorId: attackerId, targetId, cardId: attackCardId, diceRoll });
   }
@@ -740,49 +753,148 @@ export function checkHauntedBarnTrigger(state: GameState, playerId: number): Gam
   return state;
 }
 
-// ─── CUSTOM-CARD TEMPLATE HANDLERS ─────────────────────────
+// ─── CUSTOM-CARD EFFECT DISPATCHER ─────────────────────────
 //
-// Dispatch for user-created cards. The simulator routes any specialty
-// custom card here based on its template. Attack-template customs are
-// handled by applyAttackDamage above (which respects hitThresholdFor + damageFor).
+// Composable effects. Each custom card has an ORDERED list of effects.
+// Specialty-type cards run all effects when played. Attack-type cards
+// run their effects after a successful hit roll (in applyAttackDamage).
+//
+// Supported effect kinds: damage, heal, draw, discard, steal.
 
-/** Heal template: restore the player's HP to 2 (the game's max). */
-export function applyCustomHeal(state: GameState, playerId: number, def: CardDefinition): GameState {
-  const player = state.players.find(p => p.id === playerId)!;
-  if (player.hp >= 2) return state;
-  state = updatePlayer(state, playerId, {
-    hand: removeCardFromHand(player, def.id).hand,
-    cardsPlayed: player.cardsPlayed + 1,
-    hp: 2,
-  });
-  state = addEvent(state, { type: 'card_played', actorId: playerId, cardId: def.id });
-  return state;
-}
-
-/** Draw template: draw N cards (Mad Cow triggers inline like Polacken). */
-export function applyCustomDraw(state: GameState, playerId: number, def: CardDefinition): GameState {
-  const player = state.players.find(p => p.id === playerId)!;
-  const n = def.drawCount ?? 1;
-  state = updatePlayer(state, playerId, {
-    hand: removeCardFromHand(player, def.id).hand,
-    cardsPlayed: player.cardsPlayed + 1,
-  });
-  state = addEvent(state, { type: 'card_played', actorId: playerId, cardId: def.id });
-  const { state: afterDraw, drawn } = drawCards(state, playerId, n);
-  state = afterDraw;
-  if (drawn.length > 0) {
-    state = addEvent(state, { type: 'draw', actorId: playerId, cards: drawn });
+function resolveTargets(
+  state: GameState,
+  selfId: number,
+  target: CardEffect['target'],
+  chosenId: number | undefined,
+): number[] {
+  const alive = alivePlayers(state);
+  switch (target) {
+    case 'self': return [selfId];
+    case 'chosen': return chosenId !== undefined ? [chosenId] : [];
+    case 'all_opponents': return alive.filter(p => p.id !== selfId).map(p => p.id);
+    case 'next_player': {
+      const idx = state.players.findIndex(p => p.id === selfId);
+      const n = state.players.length;
+      for (let i = 1; i <= n; i++) {
+        const candidate = state.players[(idx + i) % n];
+        if (!candidate.isEliminated) return [candidate.id];
+      }
+      return [];
+    }
   }
-  return state;
 }
 
-/** Dispatch a custom specialty card based on its template. */
-export function applyCustomSpecialtyCard(state: GameState, playerId: number, cardId: string): GameState {
+/** Run a single effect against the resolved target(s). */
+function runEffect(
+  state: GameState,
+  selfId: number,
+  effect: CardEffect,
+  chosenId: number | undefined,
+): GameState {
+  const targets = resolveTargets(state, selfId, effect.target, chosenId);
+
+  switch (effect.kind) {
+    case 'damage': {
+      for (const t of targets) {
+        if (state.isOver) break;
+        state = applyDamage(state, t, effect.amount);
+      }
+      return state;
+    }
+    case 'heal': {
+      for (const t of targets) {
+        const p = state.players.find(pp => pp.id === t);
+        if (!p || p.isEliminated) continue;
+        const newHp = effect.amount === 'max' ? 2 : Math.min(2, p.hp + effect.amount);
+        state = updatePlayer(state, t, { hp: newHp });
+        state = addEvent(state, { type: 'card_played', actorId: t, detail: `Healed to ${newHp}` });
+      }
+      return state;
+    }
+    case 'draw': {
+      for (const t of targets) {
+        const { state: afterDraw, drawn } = drawCards(state, t, effect.count);
+        state = afterDraw;
+        if (drawn.length > 0) {
+          state = addEvent(state, { type: 'draw', actorId: t, cards: drawn });
+        }
+      }
+      return state;
+    }
+    case 'discard': {
+      for (const t of targets) {
+        const p = state.players.find(pp => pp.id === t);
+        if (!p || p.isEliminated || p.hand.length === 0) continue;
+        const n = Math.min(effect.count, p.hand.length);
+        // Discard the LOWEST-value cards (CARD_VALUE order)
+        const ranked = [...p.hand].sort((a, b) => (CARD_VALUE[a] ?? 50) - (CARD_VALUE[b] ?? 50));
+        const discarded = ranked.slice(0, n);
+        const remaining = [...p.hand];
+        for (const c of discarded) {
+          const idx = remaining.indexOf(c);
+          if (idx !== -1) remaining.splice(idx, 1);
+        }
+        state = updatePlayer(state, t, { hand: remaining });
+        state = { ...state, discardPile: [...state.discardPile, ...discarded] };
+        state = addEvent(state, { type: 'card_played', actorId: t, cards: discarded, detail: 'discarded' });
+      }
+      return state;
+    }
+    case 'steal': {
+      for (const t of targets) {
+        if (t === selfId) continue;
+        const victim = state.players.find(pp => pp.id === t);
+        if (!victim || victim.hand.length === 0) continue;
+        const n = Math.min(effect.count, victim.hand.length);
+        // Random pick (simulating "you see only the backs")
+        const shuffled = shuffleArray(victim.hand);
+        const stolen = shuffled.slice(0, n);
+        const remaining = [...victim.hand];
+        for (const c of stolen) {
+          const idx = remaining.indexOf(c);
+          if (idx !== -1) remaining.splice(idx, 1);
+        }
+        state = updatePlayer(state, t, { hand: remaining });
+        const me = state.players.find(p => p.id === selfId)!;
+        state = updatePlayer(state, selfId, { hand: [...me.hand, ...stolen] });
+        state = addEvent(state, { type: 'card_played', actorId: selfId, targetId: t, cards: stolen, detail: 'stolen' });
+      }
+      return state;
+    }
+  }
+}
+
+/** Run every effect on a custom card in order. */
+export function applyCustomEffects(
+  state: GameState,
+  selfId: number,
+  cardId: string,
+  chosenTargetId?: number,
+): GameState {
   const def = CARD_DATABASE[cardId];
-  if (!def || !def.isCustom) return state;
-  switch (def.template) {
-    case 'heal': return applyCustomHeal(state, playerId, def);
-    case 'draw': return applyCustomDraw(state, playerId, def);
-    default: return state;
+  if (!def || !def.effects || def.effects.length === 0) return state;
+  for (const effect of def.effects) {
+    if (state.isOver) break;
+    state = runEffect(state, selfId, effect, chosenTargetId);
   }
+  return state;
+}
+
+/** Play a custom specialty card: remove from hand, log, run all effects. */
+export function applyCustomSpecialtyCard(
+  state: GameState,
+  playerId: number,
+  cardId: string,
+  chosenTargetId?: number,
+): GameState {
+  const player = state.players.find(p => p.id === playerId)!;
+  if (!player.hand.includes(cardId)) return state;
+  state = updatePlayer(state, playerId, {
+    hand: removeCardFromHand(player, cardId).hand,
+    cardsPlayed: player.cardsPlayed + 1,
+  });
+  state = addEvent(state, { type: 'card_played', actorId: playerId, cardId, targetId: chosenTargetId });
+  state = applyCustomEffects(state, playerId, cardId, chosenTargetId);
+  state = { ...state, discardPile: [...state.discardPile, cardId] };
+  return state;
 }

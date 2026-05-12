@@ -3,11 +3,23 @@ export type CardType = 'attack' | 'specialty' | 'stationary' | 'trap';
 export type CardTiming = 'any_time' | 'own_turn' | 'automatic' | 'trap';
 
 /**
- * Custom-card templates. Each one defines how the simulator handles a
- * user-added card. Players using smart strategies will play these cards
- * with sensible defaults based on the template.
+ * Composable card effects. Custom cards can mix several of these to define
+ * arbitrary behaviours. Each effect runs in order during card resolution.
+ *
+ * Targeting conventions:
+ *   'self'           = the player who played the card
+ *   'chosen'         = a single opponent picked by the AI strategy
+ *   'all_opponents'  = every alive player except self
+ *   'next_player'    = the player whose turn comes after self
  */
-export type CardTemplate = 'attack' | 'heal' | 'draw';
+export type EffectTarget = 'self' | 'chosen' | 'all_opponents' | 'next_player';
+
+export type CardEffect =
+  | { kind: 'damage'; target: EffectTarget; amount: number }
+  | { kind: 'heal'; target: 'self' | 'chosen'; amount: number | 'max' }
+  | { kind: 'draw'; target: 'self' | 'chosen'; count: number }
+  | { kind: 'discard'; target: 'self' | 'chosen' | 'all_opponents'; count: number }
+  | { kind: 'steal'; target: 'chosen'; count: number };
 
 export interface CardDefinition {
   id: string;
@@ -21,13 +33,17 @@ export interface CardDefinition {
 
   // ── Custom-card fields (only set on user-created cards) ──
   isCustom?: boolean;
-  template?: CardTemplate;
-  /** Attack template: dice value at or above which the attack hits (1–6). */
+  /**
+   * Ordered list of effects the simulator runs when the card is played.
+   * For attack-type cards: effects fire after a successful hit roll.
+   * For specialty-type cards: effects fire immediately when played.
+   */
+  effects?: CardEffect[];
+  /**
+   * Attack-type cards only: dice value at or above which the attack hits.
+   * If absent, defaults to 4 (50%).
+   */
   hitThreshold?: number;
-  /** Attack template: HP damage on hit (default 1). */
-  damage?: number;
-  /** Draw template: number of cards drawn. */
-  drawCount?: number;
 }
 
 // ─── SPELARE ─────────────────────────────────────────────────
