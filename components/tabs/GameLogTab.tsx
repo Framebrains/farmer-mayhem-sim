@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { SimulationStats, SingleGameResult, GameEvent, PlayerSnapshot } from '@/lib/types';
 import { CARD_DATABASE } from '@/lib/cardDatabase';
-import { CardPillList } from '@/components/ui/CardPill';
+import CardPill, { CardPillList } from '@/components/ui/CardPill';
 
 const STRATEGY_LABELS: Record<string, string> = {
   expert: 'Expert',
@@ -498,33 +498,32 @@ function GameLog({ game }: { game: SingleGameResult }) {
         ))}
       </div>
 
-      {/* Card-pill colour legend */}
+      {/* Card-pill colour legend — one row per colour with ALL cards of that type */}
       <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-4">
         <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-3">Färgkodning av kort</h4>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center rounded-full border bg-red-900/50 text-red-200 border-red-800 px-2 py-0.5 text-[10px] font-medium">C4-Goat</span>
-            <span className="text-zinc-400">Attackkort</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center rounded-full border bg-blue-900/70 text-blue-200 border-blue-700 px-2 py-0.5 text-[10px] font-medium">God Mode</span>
-            <span className="text-zinc-400">Reaktivt (any-time)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center rounded-full border bg-teal-900/50 text-teal-200 border-teal-800 px-2 py-0.5 text-[10px] font-medium">Polacken</span>
-            <span className="text-zinc-400">Specialkort (egen tur)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center rounded-full border bg-amber-900/50 text-amber-200 border-amber-800 px-2 py-0.5 text-[10px] font-medium">Senile Grandma</span>
-            <span className="text-zinc-400">Stationärt (gård)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center rounded-full border bg-emerald-900/60 text-emerald-200 border-emerald-700 px-2 py-0.5 text-[10px] font-medium">Insurance</span>
-            <span className="text-zinc-400">Auto-triggar vid död</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-zinc-500 font-mono">×3</span>
-            <span className="text-zinc-400">Antal av samma kort</span>
+        <div className="space-y-2">
+          {[
+            { label: 'Attackkort', desc: 'Tärningsslag, träff = 1 HP skada', cards: ['c4_goat', 'milking_cow', 'unicorn'] },
+            { label: 'Reaktiva (any-time)', desc: 'Kan spelas under andras turer', cards: ['god_mode', 'stop_it', 'wrong_goat', 'redirect', 'adrenaline'] },
+            { label: 'Specialkort (egen tur)', desc: 'Spelas bara på din egen tur', cards: ['identity_theft', 'blottaren', 'skinny_dipping', 'the_sacrifice', 'oppenheimer', 'begger', 'steal', 'polacken', 'silvertejp', 'moonshine_night', 'loot_the_corpse'] },
+            { label: 'Stationära (gård)', desc: 'Placeras på en spelares gård tills de triggar', cards: ['senile_grandma', 'haunted_barn'] },
+            { label: 'Auto-triggar vid död', desc: 'Returnerar dig till 2 HP — funkar ej mot Nuke', cards: ['insurance'] },
+          ].map(row => (
+            <div key={row.label} className="flex flex-wrap items-baseline gap-3 py-2 border-b border-zinc-800/60 last:border-b-0">
+              <div className="flex-shrink-0 w-44">
+                <p className="text-xs font-semibold text-zinc-200">{row.label}</p>
+                <p className="text-[10px] text-zinc-500">{row.desc}</p>
+              </div>
+              <div className="flex flex-wrap gap-1 flex-1">
+                {row.cards.map(c => (
+                  <CardPill key={c} cardId={c} />
+                ))}
+              </div>
+            </div>
+          ))}
+          <div className="flex items-baseline gap-3 pt-2 text-xs text-zinc-500">
+            <span className="font-mono w-44">×3</span>
+            <span>= antal av samma kort (siffran efter namnet)</span>
           </div>
         </div>
       </div>

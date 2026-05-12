@@ -612,19 +612,17 @@ const expert: StrategyFunctions = {
     const player = getPlayer(state, playerId);
     const hitProb = hitChance(attack.attackCardId);
 
-    // Don't waste Redirect at 2 HP against a low-chance attack (Unicorn)
-    if (player.hp === 2 && hitProb < 0.4) return { play: false, newTargetId: -1 };
-
-    // Save Redirect if I have God Mode and the attack is weak
-    if (player.hp === 2 && hitProb < 0.55 && player.hand.includes('god_mode')) {
-      return { play: false, newTargetId: -1 };
+    // Redirect is a cheap defensive card. PREFER it over God Mode at 2 HP
+    // because it not only saves us but also pushes the attack onto a threat.
+    //   At 1 HP: any incoming attack we redirect (better safe).
+    //   At 2 HP: redirect any attack with ≥40% hit chance (C4, Milking Cow).
+    if (player.hp === 1 || hitProb >= 0.4) {
+      const others = aliveOthers(state, playerId).filter(p => p.id !== attack.attackerId);
+      if (others.length === 0) return { play: false, newTargetId: -1 };
+      others.sort((a, b) => threatScore(b) - threatScore(a));
+      return { play: true, newTargetId: others[0].id };
     }
-
-    // Redirect to the leader (excluding attacker)
-    const others = aliveOthers(state, playerId).filter(p => p.id !== attack.attackerId);
-    if (others.length === 0) return { play: false, newTargetId: -1 };
-    others.sort((a, b) => threatScore(b) - threatScore(a));
-    return { play: true, newTargetId: others[0].id };
+    return { play: false, newTargetId: -1 };
   },
 
   shouldPlayWrongGoat(state, playerId, attack) {
@@ -634,12 +632,11 @@ const expert: StrategyFunctions = {
     const player = getPlayer(state, playerId);
     const hitProb = hitChance(attack.attackCardId);
 
-    // Always defend at 1 HP
+    // Wrong Goat is similar to Redirect but auto-targets the most-cards player.
+    //   At 1 HP: any attack.
+    //   At 2 HP: any attack with ≥40% hit chance (C4, Milking Cow).
     if (player.hp === 1) return true;
-
-    // At 2 HP: only against high-hit-chance attacks (C4)
-    if (hitProb >= 0.6) return true;
-
+    if (hitProb >= 0.4) return true;
     return false;
   },
 
@@ -672,6 +669,14 @@ const expert: StrategyFunctions = {
     const player = getPlayer(state, playerId);
     const others = aliveOthers(state, playerId);
     const cards: string[] = [];
+
+    // ── PRIORITY 0: FREE CARDS — always take ──
+
+    // Loot the Corpse is essentially free cards from a dead player. Top priority.
+    if (player.hand.includes('loot_the_corpse') &&
+        state.players.some(p => p.isEliminated && p.hand.length > 0)) {
+      cards.push('loot_the_corpse');
+    }
 
     // ── PRIORITY 1: Defensive / setup cards ──
 
@@ -709,12 +714,6 @@ const expert: StrategyFunctions = {
       cards.push('begger');
     }
 
-    // Loot the Corpse — free cards
-    if (player.hand.includes('loot_the_corpse') &&
-        state.players.some(p => p.isEliminated && p.hand.length > 0)) {
-      cards.push('loot_the_corpse');
-    }
-
     // ── PRIORITY 4: Disrupt leader ──
 
     const leader = findLeader(state, playerId);
@@ -746,10 +745,25 @@ const expert: StrategyFunctions = {
       if (target) cards.push('moonshine_night');
     }
 
-    // The Sacrifice ONLY when desperate (1 HP) or hand bloated (≥9)
-    if (player.hand.includes('the_sacrifice') &&
-        (player.hp === 1 || player.hand.length >= 9)) {
-      cards.push('the_sacrifice');
+    // The Sacrifice — positive EV most of the time (~46% good outcomes,
+    // ~12% painful, 1% Nuke). Play when:
+    //   - Desperate (1 HP) — gamble for catch-up
+    //   - Hand bloated (≥9) — need disruption
+    //   - Behind on tempo (opponent has noticeably more HP/cards) and
+    //     we still have ≥5 cards to absorb a bad outcome
+    if (player.hand.includes('the_sacrifice')) {
+      const leader = findLeader(state, playerId);
+      const losingBadly = leader && (
+        leader.hp > player.hp ||
+        (leader.hp === player.hp && leader.hand.length >= player.hand.length + 3)
+      );
+      if (player.hp === 1) {
+        cards.push('the_sacrifice');
+      } else if (player.hand.length >= 9) {
+        cards.push('the_sacrifice');
+      } else if (losingBadly && player.hand.length >= 5) {
+        cards.push('the_sacrifice');
+      }
     }
 
     // ── PRIORITY 6: Utility (if nothing else to do) ──

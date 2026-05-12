@@ -511,7 +511,38 @@ export function applyOppenheimer(state: GameState, playerId: number): GameState 
 
 // ─── BEGGER ─────────────────────────────────────────────────
 
-/** Each other player gives 1 card to the begger */
+/**
+ * Card value ranking — higher = keep, lower = give away first.
+ * Used by Begger (opponents give their worst card) and discard logic.
+ * God Mode and Insurance are kings; Unicorn is the worst attack.
+ */
+export const CARD_VALUE: Record<string, number> = {
+  god_mode: 100,
+  insurance: 95,
+  c4_goat: 80,
+  senile_grandma: 75,    // Free attack absorption is huge
+  silvertejp: 65,        // Saves you at 1 HP
+  stop_it: 60,           // Panic save
+  oppenheimer: 55,       // Strips all C4 from opponents
+  milking_cow: 52,       // 50% hit chance
+  redirect: 48,          // Versatile defensive
+  wrong_goat: 42,
+  polacken: 38,
+  adrenaline: 35,
+  steal: 30,
+  identity_theft: 25,
+  begger: 22,
+  the_sacrifice: 18,
+  haunted_barn: 16,
+  loot_the_corpse: 15,
+  moonshine_night: 14,
+  skinny_dipping: 10,
+  blottaren: 8,
+  unicorn: 6,            // 33% hit chance, weakest attack
+};
+
+/** Each other player gives their LOWEST-value card to the begger.
+ *  Real players never give away strong cards if they have weak ones. */
 export function applyBegger(state: GameState, playerId: number): GameState {
   const player = state.players.find(p => p.id === playerId)!;
   state = updatePlayer(state, playerId, {
@@ -522,13 +553,15 @@ export function applyBegger(state: GameState, playerId: number): GameState {
   const received: string[] = [];
   for (const other of alivePlayers(state)) {
     if (other.id === playerId || other.hand.length === 0) continue;
-    // Each player gives a random card (they choose any card from their hand)
-    const giveIdx = Math.floor(Math.random() * other.hand.length);
-    const giveCard = other.hand[giveIdx];
+    // Pick the lowest-value card in the opponent's hand
+    const worst = [...other.hand].sort(
+      (a, b) => (CARD_VALUE[a] ?? 50) - (CARD_VALUE[b] ?? 50)
+    )[0];
+    const giveIdx = other.hand.indexOf(worst);
     const newHand = [...other.hand];
     newHand.splice(giveIdx, 1);
     state = updatePlayer(state, other.id, { hand: newHand });
-    received.push(giveCard);
+    received.push(worst);
   }
 
   const updatedPlayer = state.players.find(p => p.id === playerId)!;
