@@ -12,7 +12,7 @@ export interface CardDefinition {
 }
 
 // ─── SPELARE ─────────────────────────────────────────────────
-export type Strategy = 'aggressive' | 'defensive' | 'balanced' | 'random';
+export type Strategy = 'aggressive' | 'defensive' | 'balanced' | 'random' | 'expert';
 
 export interface PlayerState {
   id: number;

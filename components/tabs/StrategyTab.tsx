@@ -6,6 +6,7 @@ import {
 } from 'recharts';
 
 const STRATEGY_LABELS: Record<Strategy, string> = {
+  expert: 'Expert',
   aggressive: 'Aggressiv',
   defensive: 'Defensiv',
   balanced: 'Balanserad',
@@ -13,7 +14,7 @@ const STRATEGY_LABELS: Record<Strategy, string> = {
 };
 
 export default function StrategyTab({ stats }: { stats: SimulationStats }) {
-  const strategies = ['aggressive', 'defensive', 'balanced', 'random'] as Strategy[];
+  const strategies = ['expert', 'aggressive', 'defensive', 'balanced', 'random'] as Strategy[];
 
   const chartData = strategies.map(s => ({
     name: STRATEGY_LABELS[s],

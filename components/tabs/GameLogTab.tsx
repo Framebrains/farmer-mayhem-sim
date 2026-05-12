@@ -4,6 +4,7 @@ import { SimulationStats, SingleGameResult, GameEvent } from '@/lib/types';
 import { CARD_DATABASE } from '@/lib/cardDatabase';
 
 const STRATEGY_LABELS: Record<string, string> = {
+  expert: 'Expert',
   aggressive: 'Aggressiv',
   defensive: 'Defensiv',
   balanced: 'Balanserad',

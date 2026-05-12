@@ -11,8 +11,9 @@ interface ConfigPanelProps {
   progress: number;
 }
 
-const STRATEGY_OPTIONS: Strategy[] = ['aggressive', 'defensive', 'balanced', 'random'];
+const STRATEGY_OPTIONS: Strategy[] = ['expert', 'aggressive', 'defensive', 'balanced', 'random'];
 const STRATEGY_LABELS: Record<Strategy, string> = {
+  expert: '🧠 Expert',
   aggressive: 'Aggressiv',
   defensive: 'Defensiv',
   balanced: 'Balanserad',
