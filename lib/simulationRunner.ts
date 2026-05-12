@@ -36,6 +36,7 @@ function runSingleGame(config: SimConfig): SingleGameResult {
     startingPlayerId: startId,
     playerResults,
     events: state.events,
+    handSnapshots: state.handSnapshots,
     deckConfig: config.deckConfig,
   };
 }

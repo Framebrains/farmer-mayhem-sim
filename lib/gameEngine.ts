@@ -1,4 +1,4 @@
-import { GameState, PlayerState, SimConfig, PendingAttack } from './types';
+import { GameState, PlayerState, PlayerSnapshot, SimConfig, PendingAttack } from './types';
 import { buildDeck, buildTrapCards, CARD_DATABASE, ATTACK_HIT_THRESHOLD } from './cardDatabase';
 import { getStrategy } from './playerStrategies';
 import {
@@ -25,6 +25,16 @@ function shuffleArray<T>(arr: T[]): T[] {
 
 function rollDice(): number {
   return Math.floor(Math.random() * 6) + 1;
+}
+
+/** Snapshot every player's hand + HP + stationary cards at this moment. */
+function snapshotHands(players: PlayerState[]): PlayerSnapshot[] {
+  return players.map(p => ({
+    hp: p.hp,
+    hand: [...p.hand],
+    stationary: p.stationaryCards.map(s => s.cardId),
+    isEliminated: p.isEliminated,
+  }));
 }
 
 // ─── INIT GAME ──────────────────────────────────────────────
@@ -95,6 +105,8 @@ export function initGame(config: SimConfig): GameState {
     winnerId: null,
     isDraw: false,
     events: [],
+    // Snapshot #0 = starting hands (right after dealing, before any turn)
+    handSnapshots: [snapshotHands(players)],
   };
 }
 
@@ -213,10 +225,13 @@ export function runTurn(state: GameState): GameState {
   const playerId = currentPlayer.id;
   const playerStrategy = getStrategy(currentPlayer.strategy);
 
-  // Log turn_start so the game log can correctly label whose turn it is
+  // Log turn_start so the game log can correctly label whose turn it is,
+  // and snapshot all hands/HP at this exact moment so the UI can show
+  // "this is what every player had at the start of this turn".
   state = {
     ...state,
     events: [...state.events, { turn: state.turnNumber, type: 'turn_start', actorId: playerId }],
+    handSnapshots: [...state.handSnapshots, snapshotHands(state.players)],
   };
 
   // ── PHASE 1: Check Stop It from other players ──

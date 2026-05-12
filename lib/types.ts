@@ -34,6 +34,13 @@ export interface StationarySlot {
 }
 
 // ─── SPELSTATUS ──────────────────────────────────────────────
+export interface PlayerSnapshot {
+  hp: number;
+  hand: string[];
+  stationary: string[]; // cardIds on this player's farm
+  isEliminated: boolean;
+}
+
 export interface GameState {
   players: PlayerState[];
   deck: string[];
@@ -48,6 +55,13 @@ export interface GameState {
   winnerId: number | null;
   isDraw: boolean;
   events: GameEvent[];
+  /**
+   * Hand snapshots indexed by turn number.
+   *   [0]  = state right after dealing (starting hands)
+   *   [N]  = state at the START of turn N (before any cards are played)
+   * Each entry is a PlayerSnapshot[] indexed by player ID.
+   */
+  handSnapshots: PlayerSnapshot[][];
 }
 
 export type TurnPhase =
@@ -112,6 +126,8 @@ export interface SingleGameResult {
   startingPlayerId: number;
   playerResults: PlayerResult[];
   events: GameEvent[];
+  /** Per-turn hand snapshots — same shape as GameState.handSnapshots */
+  handSnapshots: PlayerSnapshot[][];
   deckConfig: DeckConfig;
 }
 

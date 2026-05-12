@@ -1,7 +1,9 @@
 'use client';
 
-import { SimulationStats, SingleGameResult, GameEvent } from '@/lib/types';
+import { useState } from 'react';
+import { SimulationStats, SingleGameResult, GameEvent, PlayerSnapshot } from '@/lib/types';
 import { CARD_DATABASE } from '@/lib/cardDatabase';
+import { CardPillList } from '@/components/ui/CardPill';
 
 const STRATEGY_LABELS: Record<string, string> = {
   expert: 'Expert',
@@ -294,17 +296,82 @@ function buildRounds(game: SingleGameResult): RoundGroup[] {
   return Array.from(roundMap.values()).sort((a, b) => a.round - b.round);
 }
 
-function PlayerTurn({ turn, game }: { turn: PlayerTurnGroup; game: SingleGameResult }) {
+/** Single-row hand display: HP hearts + card pills, used inline in the log. */
+function HandRow({
+  game,
+  playerId,
+  snapshot,
+  highlight,
+}: {
+  game: SingleGameResult;
+  playerId: number;
+  snapshot: PlayerSnapshot;
+  highlight?: boolean;
+}) {
+  const label = playerLabel(game, playerId);
+  const hearts = snapshot.isEliminated
+    ? <span className="text-zinc-600">💀</span>
+    : (
+      <span className="font-mono">
+        {'❤️'.repeat(snapshot.hp)}{snapshot.hp < 2 ? <span className="opacity-30">{'❤️'.repeat(2 - snapshot.hp)}</span> : null}
+      </span>
+    );
+
+  return (
+    <div className={`rounded-md px-2.5 py-1.5 ${
+      highlight ? 'bg-emerald-900/20 border border-emerald-800' : 'bg-zinc-900/40 border border-zinc-800'
+    }`}>
+      <div className="flex items-baseline gap-2 mb-1">
+        <span className={`text-xs font-semibold ${highlight ? 'text-emerald-300' : 'text-zinc-300'}`}>{label}</span>
+        <span className="text-xs">{hearts}</span>
+        <span className="text-[10px] text-zinc-500">{snapshot.hand.length} kort</span>
+        {snapshot.stationary.length > 0 && (
+          <span className="text-[10px] text-amber-400">🏚️ {snapshot.stationary.map(s => CARD_DATABASE[s]?.name ?? s).join(', ')}</span>
+        )}
+      </div>
+      <CardPillList cards={snapshot.hand} />
+    </div>
+  );
+}
+
+function PlayerTurn({
+  turn,
+  game,
+  showHands,
+}: {
+  turn: PlayerTurnGroup;
+  game: SingleGameResult;
+  showHands: boolean;
+}) {
   const label = playerLabel(game, turn.actorId);
   const formatted = turn.events
     .map(e => formatEvent(e, game))
     .filter((x): x is NonNullable<typeof x> => x !== null);
 
-  if (formatted.length === 0) return null;
+  // Hand state at start of this turn (snapshot index = turn number)
+  const snapshot = game.handSnapshots?.[turn.turnNumber];
+
+  if (formatted.length === 0 && !showHands) return null;
 
   return (
     <div className="pl-4 border-l-2 border-zinc-700 space-y-1.5 py-2">
       <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">{label}s tur</p>
+
+      {/* Hand snapshot at start of turn — only when toggle is on */}
+      {showHands && snapshot && (
+        <div className="space-y-1 pb-2 mb-1 border-b border-zinc-800/70">
+          {snapshot.map((snap, idx) => (
+            <HandRow
+              key={idx}
+              game={game}
+              playerId={idx}
+              snapshot={snap}
+              highlight={idx === turn.actorId}
+            />
+          ))}
+        </div>
+      )}
+
       {formatted.map((item, i) => (
         <p key={i} className={`text-sm leading-snug ${item.color}`}>
           {bold(item.text)}
@@ -321,6 +388,12 @@ function GameLog({ game }: { game: SingleGameResult }) {
     : game.winnerId !== null
     ? playerLabel(game, game.winnerId)
     : 'Okänd vinnare';
+
+  // Hand-snapshot toggle (default off to keep the log readable for casual viewing)
+  const [showHands, setShowHands] = useState(false);
+
+  // Starting hands = snapshot[0]
+  const startingHands = game.handSnapshots?.[0];
 
   return (
     <div className="space-y-4">
@@ -346,8 +419,40 @@ function GameLog({ game }: { game: SingleGameResult }) {
         🎲 Spelarna är namngivna i turordning — den som vann tärningsslaget är <strong className="text-zinc-400">Spelare 1</strong>, nästa medsols är Spelare 2, osv.
       </div>
 
+      {/* Starting hands — always visible */}
+      {startingHands && (
+        <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-zinc-200">🃏 Starthänder</h3>
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wide">Vad varje spelare hade innan första turen</span>
+          </div>
+          <div className="space-y-1.5">
+            {startingHands.map((snap, idx) => (
+              <HandRow key={idx} game={game} playerId={idx} snapshot={snap} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Hand-snapshot toggle */}
+      <div className="flex items-center justify-between bg-zinc-800/40 border border-zinc-700/60 rounded-lg px-3 py-2">
+        <span className="text-xs text-zinc-400">
+          📋 Visa varje spelares hand i början av varje tur
+        </span>
+        <button
+          onClick={() => setShowHands(v => !v)}
+          className={`text-xs font-medium px-3 py-1 rounded-md transition-colors ${
+            showHands
+              ? 'bg-emerald-600 text-white'
+              : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+          }`}
+        >
+          {showHands ? '✓ På' : 'Av'}
+        </button>
+      </div>
+
       {/* Round-by-round log */}
-      <div className="bg-zinc-900 border border-zinc-700 rounded-xl overflow-y-auto" style={{ maxHeight: '580px' }}>
+      <div className="bg-zinc-900 border border-zinc-700 rounded-xl overflow-y-auto" style={{ maxHeight: '700px' }}>
         {rounds.map(round => (
           <div key={round.round} className="border-b border-zinc-800 last:border-b-0">
             {/* Round header */}
@@ -357,7 +462,7 @@ function GameLog({ game }: { game: SingleGameResult }) {
             {/* Player turns within round */}
             <div className="px-4 py-2 space-y-3">
               {round.turns.map(turn => (
-                <PlayerTurn key={turn.turnNumber} turn={turn} game={game} />
+                <PlayerTurn key={turn.turnNumber} turn={turn} game={game} showHands={showHands} />
               ))}
             </div>
           </div>
