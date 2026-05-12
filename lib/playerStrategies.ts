@@ -1,5 +1,35 @@
 import { GameState, PendingAttack, Strategy, PlayerState } from './types';
-import { CARD_DATABASE, ATTACK_HIT_THRESHOLD } from './cardDatabase';
+import { CARD_DATABASE, ATTACK_HIT_THRESHOLD, hitThresholdFor } from './cardDatabase';
+
+/** Sort a player's attack cards by hit chance (highest first). Works for both
+ *  built-in and custom attack cards via hitThresholdFor(). */
+function bestAttackInHand(hand: string[]): string | null {
+  const attacks = [...new Set(hand)]
+    .filter(c => {
+      const def = CARD_DATABASE[c];
+      return def?.type === 'attack';
+    })
+    .filter(c => hand.includes(c)) // re-check (Set dedup'd)
+    .sort((a, b) => {
+      const tA = hitThresholdFor(a) ?? 7;
+      const tB = hitThresholdFor(b) ?? 7;
+      return tA - tB; // lower threshold = better
+    });
+  return attacks[0] ?? null;
+}
+
+/** Find any custom cards in hand that match a given template. */
+function customsByTemplate(hand: string[], template: 'attack' | 'heal' | 'draw'): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const c of hand) {
+    if (seen.has(c)) continue;
+    seen.add(c);
+    const def = CARD_DATABASE[c];
+    if (def?.isCustom && def.template === template) out.push(c);
+  }
+  return out;
+}
 
 // ─── HELPERS ────────────────────────────────────────────────
 
@@ -62,8 +92,8 @@ function findLeader(state: GameState, excludeId: number): PlayerState | null {
 }
 
 function hitChance(cardId: string): number {
-  const threshold = ATTACK_HIT_THRESHOLD[cardId];
-  if (!threshold) return 0;
+  const threshold = hitThresholdFor(cardId);
+  if (threshold == null) return 0;
   return (7 - threshold) / 6;
 }
 
@@ -83,14 +113,12 @@ const expert: StrategyFunctions = {
     const player = getPlayer(state, playerId);
     if (player.hand.length === 0) return null;
 
-    // Endgame: with one opponent left, attack with anything
+    const best = bestAttackInHand(player.hand);
+    if (!best) return null;
+
+    // Endgame: with one opponent left, swing with anything
     const alive = alivePlayers(state).length;
-    if (alive === 2) {
-      if (player.hand.includes('c4_goat')) return 'c4_goat';
-      if (player.hand.includes('milking_cow')) return 'milking_cow';
-      if (player.hand.includes('unicorn')) return 'unicorn';
-      return null;
-    }
+    if (alive === 2) return best;
 
     // At 1 HP without protection, lay low
     if (player.hp === 1) {
@@ -98,13 +126,15 @@ const expert: StrategyFunctions = {
       if (!hasProtection) return null;
     }
 
-    if (player.hand.includes('c4_goat')) return 'c4_goat';
-    if (player.hand.includes('milking_cow')) return 'milking_cow';
-    if (player.hand.includes('unicorn')) {
+    // Avoid swinging Unicorn (low hit chance) unless target is at 1 HP
+    if (best === 'unicorn' || hitChance(best) < 0.4) {
       const others = aliveOthers(state, playerId);
-      if (others.some(o => o.hp === 1)) return 'unicorn';
+      if (!others.some(o => o.hp === 1)) {
+        // Look for a better option (we already picked the best); skip attack.
+        return null;
+      }
     }
-    return null;
+    return best;
   },
 
   chooseAttackTarget(state, attackerId) {
@@ -270,10 +300,21 @@ const expert: StrategyFunctions = {
     }
     if (cards.length === 0 && player.hand.includes('blottaren')) cards.push('blottaren');
 
-    // PACING: max 2 specialty cards / turn unless hand bloated
-    const unique = [...new Set(cards)];
-    if (player.hand.length < 9) return unique.slice(0, 2);
-    return unique;
+    // CUSTOM CARDS: heal/draw templates handled by sensible defaults.
+    //   heal → play when wounded (HP < 2)
+    //   draw → play when hand is small (≤ 5)
+    for (const cardId of customsByTemplate(player.hand, 'heal')) {
+      if (player.hp < 2) cards.push(cardId);
+    }
+    for (const cardId of customsByTemplate(player.hand, 'draw')) {
+      if (player.hand.length <= 5) cards.push(cardId);
+    }
+
+    // No artificial pacing cap — real players play as many specialty cards
+    // as they need to. The priority gates above naturally produce 1–2 cards
+    // most turns, but in panic situations (1 HP, multiple defensive plays)
+    // a player will reasonably play 3+ cards to survive.
+    return [...new Set(cards)];
   },
 
   chooseTargetForCard(state, playerId, cardId) {
@@ -325,14 +366,9 @@ const aggressive: StrategyFunctions = {
   ...expert,
 
   chooseAttackCard(state, playerId) {
-    // Aggressive: always swings if able. Even at 1 HP without protection
-    // (a real aggressive player gambles to take the leader down).
+    // Aggressive: always swings with the best attack available.
     const player = getPlayer(state, playerId);
-    if (player.hand.length === 0) return null;
-    if (player.hand.includes('c4_goat')) return 'c4_goat';
-    if (player.hand.includes('milking_cow')) return 'milking_cow';
-    if (player.hand.includes('unicorn')) return 'unicorn';
-    return null;
+    return bestAttackInHand(player.hand);
   },
 
   chooseAttackTarget(state, attackerId) {
@@ -457,10 +493,16 @@ const aggressive: StrategyFunctions = {
     if (cards.length === 0 && player.hand.includes('skinny_dipping')) cards.push('skinny_dipping');
     if (cards.length === 0 && player.hand.includes('blottaren')) cards.push('blottaren');
 
-    // Aggressive PACING: up to 3 specialty cards / turn
-    const unique = [...new Set(cards)];
-    if (player.hand.length < 9) return unique.slice(0, 3);
-    return unique;
+    // Custom heal/draw — aggressive uses them eagerly
+    for (const cardId of customsByTemplate(player.hand, 'heal')) {
+      if (player.hp < 2) cards.push(cardId);
+    }
+    for (const cardId of customsByTemplate(player.hand, 'draw')) {
+      if (player.hand.length <= 6) cards.push(cardId);
+    }
+
+    // No pacing cap — aggressive players especially won't hold back.
+    return [...new Set(cards)];
   },
 };
 
@@ -476,10 +518,11 @@ const defensive: StrategyFunctions = {
     const player = getPlayer(state, playerId);
     // Defensive: only attacks at FULL HP (2). Avoids drawing attention while wounded.
     if (player.hp < 2) return null;
-    // Skip Unicorn — too low hit chance, hand it as discard fodder later
-    if (player.hand.includes('c4_goat')) return 'c4_goat';
-    if (player.hand.includes('milking_cow')) return 'milking_cow';
-    return null;
+    const best = bestAttackInHand(player.hand);
+    if (!best) return null;
+    // Defensive skips low-hit-chance attacks (e.g. Unicorn at 33%)
+    if (hitChance(best) < 0.4) return null;
+    return best;
   },
 
   chooseAttackTarget(state, attackerId) {
@@ -608,10 +651,17 @@ const defensive: StrategyFunctions = {
     // The Sacrifice ONLY at 1 HP — defensive never gambles when healthy
     if (player.hp === 1 && player.hand.includes('the_sacrifice')) cards.push('the_sacrifice');
 
-    // No utility filler — defensive holds cards until they matter
-    const unique = [...new Set(cards)];
-    if (player.hand.length < 9) return unique.slice(0, 2);
-    return unique;
+    // Custom heal/draw — defensive uses heal even more eagerly, draw conservatively
+    for (const cardId of customsByTemplate(player.hand, 'heal')) {
+      if (player.hp < 2) cards.push(cardId);
+    }
+    for (const cardId of customsByTemplate(player.hand, 'draw')) {
+      if (player.hand.length <= 5) cards.push(cardId);
+    }
+
+    // No utility filler — defensive holds cards until they matter.
+    // No artificial cap — strategy gating already keeps defensive's plays low.
+    return [...new Set(cards)];
   },
 };
 

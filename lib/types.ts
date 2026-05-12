@@ -2,6 +2,13 @@
 export type CardType = 'attack' | 'specialty' | 'stationary' | 'trap';
 export type CardTiming = 'any_time' | 'own_turn' | 'automatic' | 'trap';
 
+/**
+ * Custom-card templates. Each one defines how the simulator handles a
+ * user-added card. Players using smart strategies will play these cards
+ * with sensible defaults based on the template.
+ */
+export type CardTemplate = 'attack' | 'heal' | 'draw';
+
 export interface CardDefinition {
   id: string;
   name: string;
@@ -9,6 +16,18 @@ export interface CardDefinition {
   timing: CardTiming;
   count: number;
   canBeNopedByGodMode: boolean;
+  /** Plain-language rules text shown in tooltips. */
+  description?: string;
+
+  // ── Custom-card fields (only set on user-created cards) ──
+  isCustom?: boolean;
+  template?: CardTemplate;
+  /** Attack template: dice value at or above which the attack hits (1–6). */
+  hitThreshold?: number;
+  /** Attack template: HP damage on hit (default 1). */
+  damage?: number;
+  /** Draw template: number of cards drawn. */
+  drawCount?: number;
 }
 
 // ─── SPELARE ─────────────────────────────────────────────────

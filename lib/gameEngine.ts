@@ -1,5 +1,5 @@
 import { GameState, PlayerState, PlayerSnapshot, SimConfig, PendingAttack } from './types';
-import { buildDeck, buildTrapCards, CARD_DATABASE, ATTACK_HIT_THRESHOLD } from './cardDatabase';
+import { buildDeck, buildTrapCards, CARD_DATABASE } from './cardDatabase';
 import { getStrategy } from './playerStrategies';
 import {
   applyAttackDamage, applyGodMode, applyStopIt, applyWrongGoat, applyRedirect,
@@ -7,6 +7,7 @@ import {
   applyTheSacrifice, applyOppenheimer, applyBegger, applySteal, applySilvertejp,
   applyMoonshineNight, applyLootTheCorpse, applyPolacken, applyMadCow,
   applySenileGrandma, applyHauntedBarn, checkHauntedBarnTrigger, applyDamage,
+  applyCustomSpecialtyCard,
 } from './cardEffects';
 
 const MAX_TURNS = 200;
@@ -197,8 +198,14 @@ function playSpecialtyCard(state: GameState, playerId: number, cardId: string): 
       if (targetId < 0) return state;
       return applyHauntedBarn(state, playerId, targetId);
     }
-    default:
+    default: {
+      // Unknown built-in id → check if it's a custom card and dispatch by template
+      const def = CARD_DATABASE[cardId];
+      if (def?.isCustom) {
+        return applyCustomSpecialtyCard(state, playerId, cardId);
+      }
       return state;
+    }
   }
 }
 

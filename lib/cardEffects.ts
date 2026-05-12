@@ -1,5 +1,5 @@
-import { GameState, PlayerState, GameEvent, StationarySlot } from './types';
-import { ATTACK_HIT_THRESHOLD, spinWheel, WheelSegment } from './cardDatabase';
+import { GameState, PlayerState, GameEvent, StationarySlot, CardDefinition } from './types';
+import { CARD_DATABASE, hitThresholdFor, damageFor, spinWheel, WheelSegment } from './cardDatabase';
 
 // ─── HELPERS ────────────────────────────────────────────────
 
@@ -154,16 +154,18 @@ export function applyDamage(state: GameState, targetId: number, amount: number, 
 
 // ─── ATTACK EFFECTS ─────────────────────────────────────────
 
-/** Resolve an attack card's dice roll and apply damage if it hits */
+/** Resolve an attack card's dice roll and apply damage if it hits. Works for
+ *  both built-in attacks (c4/milking/unicorn) and custom 'attack'-template cards. */
 export function applyAttackDamage(state: GameState, attackerId: number, targetId: number, attackCardId: string, diceRoll: number): GameState {
-  const threshold = ATTACK_HIT_THRESHOLD[attackCardId];
-  if (!threshold) return state;
+  const threshold = hitThresholdFor(attackCardId);
+  if (threshold == null) return state;
+  const damage = damageFor(attackCardId);
 
   if (diceRoll >= threshold) {
     state = addEvent(state, { type: 'attack_hit', actorId: attackerId, targetId, cardId: attackCardId, diceRoll });
     const attacker = state.players.find(p => p.id === attackerId)!;
-    state = updatePlayer(state, attackerId, { damageDealt: attacker.damageDealt + 1 });
-    state = applyDamage(state, targetId, 1);
+    state = updatePlayer(state, attackerId, { damageDealt: attacker.damageDealt + damage });
+    state = applyDamage(state, targetId, damage);
   } else {
     state = addEvent(state, { type: 'attack_missed', actorId: attackerId, targetId, cardId: attackCardId, diceRoll });
   }
@@ -736,4 +738,51 @@ export function checkHauntedBarnTrigger(state: GameState, playerId: number): Gam
     state = applyDamage(state, playerId, 1);
   }
   return state;
+}
+
+// ─── CUSTOM-CARD TEMPLATE HANDLERS ─────────────────────────
+//
+// Dispatch for user-created cards. The simulator routes any specialty
+// custom card here based on its template. Attack-template customs are
+// handled by applyAttackDamage above (which respects hitThresholdFor + damageFor).
+
+/** Heal template: restore the player's HP to 2 (the game's max). */
+export function applyCustomHeal(state: GameState, playerId: number, def: CardDefinition): GameState {
+  const player = state.players.find(p => p.id === playerId)!;
+  if (player.hp >= 2) return state;
+  state = updatePlayer(state, playerId, {
+    hand: removeCardFromHand(player, def.id).hand,
+    cardsPlayed: player.cardsPlayed + 1,
+    hp: 2,
+  });
+  state = addEvent(state, { type: 'card_played', actorId: playerId, cardId: def.id });
+  return state;
+}
+
+/** Draw template: draw N cards (Mad Cow triggers inline like Polacken). */
+export function applyCustomDraw(state: GameState, playerId: number, def: CardDefinition): GameState {
+  const player = state.players.find(p => p.id === playerId)!;
+  const n = def.drawCount ?? 1;
+  state = updatePlayer(state, playerId, {
+    hand: removeCardFromHand(player, def.id).hand,
+    cardsPlayed: player.cardsPlayed + 1,
+  });
+  state = addEvent(state, { type: 'card_played', actorId: playerId, cardId: def.id });
+  const { state: afterDraw, drawn } = drawCards(state, playerId, n);
+  state = afterDraw;
+  if (drawn.length > 0) {
+    state = addEvent(state, { type: 'draw', actorId: playerId, cards: drawn });
+  }
+  return state;
+}
+
+/** Dispatch a custom specialty card based on its template. */
+export function applyCustomSpecialtyCard(state: GameState, playerId: number, cardId: string): GameState {
+  const def = CARD_DATABASE[cardId];
+  if (!def || !def.isCustom) return state;
+  switch (def.template) {
+    case 'heal': return applyCustomHeal(state, playerId, def);
+    case 'draw': return applyCustomDraw(state, playerId, def);
+    default: return state;
+  }
 }

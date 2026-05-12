@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { SimConfig, SimulationStats } from '@/lib/types';
 import { runSimulations } from '@/lib/simulationRunner';
+import { mergeCustomCards } from '@/lib/cardDatabase';
 import ConfigPanel from '@/components/ConfigPanel';
 import Dashboard from '@/components/Dashboard';
 
@@ -22,6 +23,9 @@ export default function Home() {
   const [completedGames, setCompletedGames] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Hydrate user-defined custom cards into CARD_DATABASE on mount
+  useEffect(() => { mergeCustomCards(); }, []);
 
   const handleRun = useCallback(async () => {
     if (isRunning) return;

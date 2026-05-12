@@ -1,8 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { SimConfig, Strategy } from '@/lib/types';
-import { CARD_DATABASE } from '@/lib/cardDatabase';
+import { SimConfig, Strategy, CardDefinition, CardTemplate } from '@/lib/types';
+import {
+  CARD_DATABASE, registerCustomCard, unregisterCustomCard,
+  loadCustomCards, saveCustomCards,
+} from '@/lib/cardDatabase';
 
 interface ConfigPanelProps {
   config: SimConfig;
@@ -31,9 +34,8 @@ const STRATEGY_DESCRIPTIONS: Record<Strategy, string> = {
 const PLAYER_COUNTS = [2, 3, 4, 5, 6];
 const SIM_COUNTS = [100, 1000, 5000, 10000];
 
-// ALL cards — including traps (Mad Cow). Traps don't go to hands, but they
-// ARE shuffled into the deck and we should let the user configure them.
-const ALL_CARDS = Object.values(CARD_DATABASE);
+// (ALL_CARDS computed lazily inside the component so custom cards added at
+// runtime show up immediately without a full reload.)
 
 // Group cards by their role so the expanded view can show columns
 const CARD_GROUPS = [
@@ -58,6 +60,12 @@ function cardGroup(cardId: string): string {
 
 export default function ConfigPanel({ config, onChange, onRun, isRunning, progress }: ConfigPanelProps) {
   const [showDeckModal, setShowDeckModal] = useState(false);
+  const [showAddCard, setShowAddCard] = useState(false);
+  // Bumping this re-renders the panel after a custom card is added/removed
+  // so the deck list reflects new entries from CARD_DATABASE.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const ALL_CARDS = Object.values(CARD_DATABASE);
+  void refreshKey;
 
   function setPlayerCount(n: number) {
     // New players default to the smart 'expert' brain
@@ -84,6 +92,27 @@ export default function ConfigPanel({ config, onChange, onRun, isRunning, progre
 
   function resetDeck() {
     onChange({ ...config, deckConfig: { overrides: {} } });
+  }
+
+  function addCustomCard(card: CardDefinition) {
+    // Persist + register so it's immediately usable in the simulator
+    const all = loadCustomCards();
+    all[card.id] = card;
+    saveCustomCards(all);
+    registerCustomCard(card);
+    setRefreshKey(k => k + 1);
+  }
+
+  function removeCustomCard(id: string) {
+    const all = loadCustomCards();
+    delete all[id];
+    saveCustomCards(all);
+    unregisterCustomCard(id);
+    // Also drop any deck override for it
+    const overrides = { ...config.deckConfig.overrides };
+    delete overrides[id];
+    onChange({ ...config, deckConfig: { overrides } });
+    setRefreshKey(k => k + 1);
   }
 
   const getCardCount = (cardId: string) =>
@@ -302,25 +331,45 @@ export default function ConfigPanel({ config, onChange, onRun, isRunning, progre
                         const isModified = card.id in config.deckConfig.overrides;
                         const isTrap = card.type === 'trap';
                         return (
-                          <div key={card.id} className="flex items-center gap-2">
-                            <div className="flex-1 min-w-0">
-                              <p className={`text-sm font-medium truncate ${isModified ? 'text-orange-400' : 'text-zinc-200'}`}>
-                                {card.name}
-                                {isTrap && <span className="ml-1.5 text-[9px] bg-purple-900/60 text-purple-300 px-1 py-0.5 rounded">HUSKORT</span>}
-                              </p>
-                              <p className="text-[10px] text-zinc-500">standard: {card.count}</p>
+                          <div key={card.id} className="group relative">
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 min-w-0">
+                                <p className={`text-sm font-medium truncate flex items-center gap-1.5 ${isModified ? 'text-orange-400' : 'text-zinc-200'}`}>
+                                  {card.name}
+                                  {card.description && (
+                                    <span className="text-zinc-500 hover:text-zinc-300 text-[10px] cursor-help" title={card.description}>ⓘ</span>
+                                  )}
+                                  {isTrap && <span className="text-[9px] bg-purple-900/60 text-purple-300 px-1 py-0.5 rounded">HUSKORT</span>}
+                                  {card.isCustom && <span className="text-[9px] bg-pink-900/60 text-pink-300 px-1 py-0.5 rounded">EGET</span>}
+                                </p>
+                                <p className="text-[10px] text-zinc-500">standard: {card.count}</p>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => setCardCount(card.id, Math.max(0, count - 1))}
+                                  className="w-7 h-7 bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-200 text-sm font-bold"
+                                >−</button>
+                                <span className="w-7 text-center text-white text-sm font-mono font-bold">{count}</span>
+                                <button
+                                  onClick={() => setCardCount(card.id, count + 1)}
+                                  className="w-7 h-7 bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-200 text-sm font-bold"
+                                >+</button>
+                                {card.isCustom && (
+                                  <button
+                                    onClick={() => { if (confirm(`Ta bort kortet "${card.name}" helt?`)) removeCustomCard(card.id); }}
+                                    className="ml-1 w-7 h-7 bg-red-900/40 hover:bg-red-800 rounded text-red-300 text-xs"
+                                    title="Ta bort detta egna kort"
+                                  >🗑</button>
+                                )}
+                              </div>
                             </div>
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => setCardCount(card.id, Math.max(0, count - 1))}
-                                className="w-7 h-7 bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-200 text-sm font-bold"
-                              >−</button>
-                              <span className="w-7 text-center text-white text-sm font-mono font-bold">{count}</span>
-                              <button
-                                onClick={() => setCardCount(card.id, count + 1)}
-                                className="w-7 h-7 bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-200 text-sm font-bold"
-                              >+</button>
-                            </div>
+                            {/* Pretty tooltip on hover (desktop) */}
+                            {card.description && (
+                              <div className="invisible group-hover:visible absolute z-50 left-0 top-full mt-1 w-72 bg-zinc-950 border border-zinc-600 rounded-lg p-3 text-xs text-zinc-200 shadow-2xl leading-relaxed pointer-events-none">
+                                <p className="font-semibold text-white mb-1">{card.name}</p>
+                                <p className="text-zinc-300">{card.description}</p>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -331,7 +380,13 @@ export default function ConfigPanel({ config, onChange, onRun, isRunning, progre
             </div>
 
             {/* Footer */}
-            <div className="px-6 py-3 border-t border-zinc-700 flex items-center justify-end gap-2 bg-zinc-900/50">
+            <div className="px-6 py-3 border-t border-zinc-700 flex items-center justify-between gap-2 bg-zinc-900/50">
+              <button
+                onClick={() => setShowAddCard(true)}
+                className="text-sm font-medium bg-pink-600 hover:bg-pink-500 text-white px-4 py-2 rounded-md transition-colors"
+              >
+                ＋ Lägg till eget kort
+              </button>
               <button
                 onClick={() => setShowDeckModal(false)}
                 className="text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-md transition-colors"
@@ -342,6 +397,228 @@ export default function ConfigPanel({ config, onChange, onRun, isRunning, progre
           </div>
         </div>
       )}
+
+      {/* ──────── ADD CUSTOM CARD MODAL ──────── */}
+      {showAddCard && (
+        <AddCardModal
+          onClose={() => setShowAddCard(false)}
+          onAdd={card => { addCustomCard(card); setShowAddCard(false); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════
+// ADD CARD MODAL — define new custom cards with name, description,
+// and a behaviour template that the simulator can actually execute.
+// ════════════════════════════════════════════════════════════════
+
+function AddCardModal({
+  onClose,
+  onAdd,
+}: {
+  onClose: () => void;
+  onAdd: (card: CardDefinition) => void;
+}) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [template, setTemplate] = useState<CardTemplate>('attack');
+  const [count, setCount] = useState(3);
+  const [hitThreshold, setHitThreshold] = useState(4);
+  const [damage, setDamage] = useState(1);
+  const [drawCount, setDrawCount] = useState(2);
+
+  function generateId(s: string): string {
+    const slug = s.toLowerCase()
+      .replace(/[åä]/g, 'a').replace(/ö/g, 'o')
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    return `custom_${slug || Date.now()}`;
+  }
+
+  function handleSubmit() {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const id = generateId(trimmed);
+    if (CARD_DATABASE[id]) {
+      alert(`Ett kort med ID "${id}" finns redan. Välj ett annat namn.`);
+      return;
+    }
+
+    const base: CardDefinition = {
+      id,
+      name: trimmed,
+      type: template === 'attack' ? 'attack' : 'specialty',
+      timing: 'own_turn',
+      count: Math.max(1, Math.min(30, count)),
+      canBeNopedByGodMode: template === 'attack',
+      description: description.trim() || undefined,
+      isCustom: true,
+      template,
+    };
+    if (template === 'attack') {
+      base.hitThreshold = Math.max(2, Math.min(6, hitThreshold));
+      base.damage = Math.max(1, Math.min(2, damage));
+    }
+    if (template === 'draw') {
+      base.drawCount = Math.max(1, Math.min(5, drawCount));
+    }
+    onAdd(base);
+  }
+
+  const previewProbability = template === 'attack'
+    ? `${(((7 - hitThreshold) / 6) * 100).toFixed(0)}% träffchans (tärning ≥ ${hitThreshold})`
+    : '';
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="px-6 py-4 border-b border-zinc-700 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-white">Lägg till eget kort</h2>
+            <p className="text-xs text-zinc-400 mt-0.5">Skapa ett nytt kort. Simulatorn använder det direkt baserat på vald mall.</p>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white text-2xl leading-none px-2">✕</button>
+        </div>
+
+        <div className="px-6 py-5 space-y-5">
+
+          {/* Name */}
+          <div>
+            <label className="text-xs font-semibold text-zinc-300 block mb-1">Kortnamn *</label>
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="t.ex. Super Goat"
+              maxLength={30}
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-pink-500"
+            />
+          </div>
+
+          {/* Description */}
+          <div>
+            <label className="text-xs font-semibold text-zinc-300 block mb-1">Regeltext (förklaring för spelare)</label>
+            <textarea
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder="t.ex. En super-getbomb. Slå tärningen — träff på 2+ ger 2 HP skada."
+              rows={2}
+              maxLength={200}
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-md px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-pink-500 resize-y"
+            />
+            <p className="text-[10px] text-zinc-600 mt-1">Visas som tooltip i kortlek-redigeraren.</p>
+          </div>
+
+          {/* Template */}
+          <div>
+            <label className="text-xs font-semibold text-zinc-300 block mb-2">Vad gör kortet? (mall)</label>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { id: 'attack' as CardTemplate, icon: '⚔️', label: 'Attack', desc: 'Slå tärning + skada' },
+                { id: 'heal'   as CardTemplate, icon: '🩹', label: 'Helande', desc: 'Återställ till 2 HP' },
+                { id: 'draw'   as CardTemplate, icon: '🃏', label: 'Dra kort', desc: 'Dra N kort' },
+              ]).map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => setTemplate(t.id)}
+                  className={`p-3 rounded-lg text-left border transition-colors ${
+                    template === t.id
+                      ? 'border-pink-500 bg-pink-900/30'
+                      : 'border-zinc-700 bg-zinc-800 hover:border-zinc-500'
+                  }`}
+                >
+                  <div className="text-2xl">{t.icon}</div>
+                  <div className="text-xs font-bold text-white mt-1">{t.label}</div>
+                  <div className="text-[10px] text-zinc-400">{t.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Template-specific parameters */}
+          {template === 'attack' && (
+            <div className="bg-zinc-800/40 border border-zinc-700 rounded-lg p-3 space-y-3">
+              <p className="text-xs font-semibold text-red-300">Attack-parametrar</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] text-zinc-400 block mb-1">Träffar vid tärning ≥</label>
+                  <input
+                    type="number" min={2} max={6} value={hitThreshold}
+                    onChange={e => setHitThreshold(parseInt(e.target.value) || 4)}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-sm text-white font-mono"
+                  />
+                  <p className="text-[10px] text-zinc-500 mt-0.5">2 = nästan alltid · 6 = nästan aldrig</p>
+                </div>
+                <div>
+                  <label className="text-[11px] text-zinc-400 block mb-1">HP skada vid träff</label>
+                  <input
+                    type="number" min={1} max={2} value={damage}
+                    onChange={e => setDamage(parseInt(e.target.value) || 1)}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-sm text-white font-mono"
+                  />
+                  <p className="text-[10px] text-zinc-500 mt-0.5">1 = vanligt · 2 = boss-kort</p>
+                </div>
+              </div>
+              <p className="text-[11px] text-amber-400">📊 {previewProbability}</p>
+            </div>
+          )}
+
+          {template === 'draw' && (
+            <div className="bg-zinc-800/40 border border-zinc-700 rounded-lg p-3">
+              <p className="text-xs font-semibold text-teal-300 mb-2">Dra-parametrar</p>
+              <label className="text-[11px] text-zinc-400 block mb-1">Antal kort att dra</label>
+              <input
+                type="number" min={1} max={5} value={drawCount}
+                onChange={e => setDrawCount(parseInt(e.target.value) || 2)}
+                className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-sm text-white font-mono"
+              />
+              <p className="text-[10px] text-zinc-500 mt-0.5">Mad Cow triggas inline om den dras (precis som Polacken).</p>
+            </div>
+          )}
+
+          {template === 'heal' && (
+            <div className="bg-zinc-800/40 border border-zinc-700 rounded-lg p-3">
+              <p className="text-xs font-semibold text-emerald-300 mb-1">Helande-parametrar</p>
+              <p className="text-[11px] text-zinc-400">Återställer alltid spelaren till 2 HP (max). Spelas bara om spelaren är på 1 HP.</p>
+            </div>
+          )}
+
+          {/* Count in deck */}
+          <div>
+            <label className="text-xs font-semibold text-zinc-300 block mb-1">Antal i leken</label>
+            <input
+              type="number" min={1} max={30} value={count}
+              onChange={e => setCount(parseInt(e.target.value) || 3)}
+              className="w-32 bg-zinc-800 border border-zinc-700 rounded-md px-3 py-2 text-sm text-white font-mono"
+            />
+            <p className="text-[10px] text-zinc-500 mt-1">Kan justeras senare i kortlek-redigeraren.</p>
+          </div>
+
+        </div>
+
+        <div className="px-6 py-3 border-t border-zinc-700 flex items-center justify-end gap-2 bg-zinc-900/50">
+          <button
+            onClick={onClose}
+            className="text-sm font-medium bg-zinc-700 hover:bg-zinc-600 text-zinc-200 px-4 py-2 rounded-md"
+          >Avbryt</button>
+          <button
+            onClick={handleSubmit}
+            disabled={!name.trim()}
+            className={`text-sm font-medium px-4 py-2 rounded-md transition-colors ${
+              name.trim()
+                ? 'bg-pink-600 hover:bg-pink-500 text-white'
+                : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+            }`}
+          >Lägg till kort</button>
+        </div>
+      </div>
     </div>
   );
 }
