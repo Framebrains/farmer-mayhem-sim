@@ -12,7 +12,15 @@ export interface CardDefinition {
 }
 
 // ─── SPELARE ─────────────────────────────────────────────────
-export type Strategy = 'aggressive' | 'defensive' | 'balanced' | 'random' | 'expert';
+/**
+ * Player AI strategy. All "smart" variants share the same core decision-making
+ * (Expert's brain) with different style biases. Only 'random' is a naive baseline.
+ *   expert     = Smart (balanserad) — realistic default
+ *   aggressive = Smart variant biased toward offence / risk
+ *   defensive  = Smart variant biased toward survival / patience
+ *   random     = Naive baseline (no heuristics, fully random)
+ */
+export type Strategy = 'expert' | 'aggressive' | 'defensive' | 'random';
 
 export interface PlayerState {
   id: number;

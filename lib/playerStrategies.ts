@@ -38,21 +38,307 @@ export interface StrategyFunctions {
   chooseCardsToDiscard(state: GameState, playerId: number, count: number): string[];
 }
 
-// ─── AGGRESSIVE ─────────────────────────────────────────────
+// ─── SMART-BRAIN HELPERS ────────────────────────────────────
+//
+// All "smart" strategies share the same core decision-making. The three
+// strategies (expert / aggressive / defensive) differ only in *style biases*
+// applied on top — much like real human players who all understand the
+// game but lean toward offence vs. defence.
 
-const aggressive: StrategyFunctions = {
+/** Composite threat score for a player. HP weighs heaviest. */
+function threatScore(p: PlayerState): number {
+  let s = p.hp * 10 + p.hand.length * 0.5;
+  const attacks = p.hand.filter(c => CARD_DATABASE[c]?.type === 'attack').length;
+  s += attacks * 2;
+  if (p.stationaryCards.some(x => x.cardId === 'senile_grandma')) s -= 8;
+  if (p.hand.includes('insurance') && !p.hasUsedInsurance) s += 3;
+  return s;
+}
+
+function findLeader(state: GameState, excludeId: number): PlayerState | null {
+  const others = state.players.filter(p => !p.isEliminated && p.id !== excludeId);
+  if (others.length === 0) return null;
+  return others.reduce((a, b) => threatScore(a) > threatScore(b) ? a : b);
+}
+
+function hitChance(cardId: string): number {
+  const threshold = ATTACK_HIT_THRESHOLD[cardId];
+  if (!threshold) return 0;
+  return (7 - threshold) / 6;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXPERT (Smart — balanserad). The realistic baseline.
+// ═══════════════════════════════════════════════════════════════
+//
+// Plays like a thoughtful human with full information.
+//   • Attacks the LEADER (highest threat score)
+//   • Saves God Mode for likely-lethal threats
+//   • Resource pacing: max 2 specialty cards / turn
+//   • Combo awareness (Oppenheimer before C4 attacks)
+//   • Adrenaline only on killing-blow miss or last-stand hit
+
+const expert: StrategyFunctions = {
   chooseAttackCard(state, playerId) {
-    const hand = getPlayer(state, playerId).hand;
-    if (hand.includes('c4_goat')) return 'c4_goat';
-    if (hand.includes('milking_cow')) return 'milking_cow';
-    if (hand.includes('unicorn')) return 'unicorn';
+    const player = getPlayer(state, playerId);
+    if (player.hand.length === 0) return null;
+
+    // Endgame: with one opponent left, attack with anything
+    const alive = alivePlayers(state).length;
+    if (alive === 2) {
+      if (player.hand.includes('c4_goat')) return 'c4_goat';
+      if (player.hand.includes('milking_cow')) return 'milking_cow';
+      if (player.hand.includes('unicorn')) return 'unicorn';
+      return null;
+    }
+
+    // At 1 HP without protection, lay low
+    if (player.hp === 1) {
+      const hasProtection = player.hand.includes('god_mode') || player.hand.includes('insurance');
+      if (!hasProtection) return null;
+    }
+
+    if (player.hand.includes('c4_goat')) return 'c4_goat';
+    if (player.hand.includes('milking_cow')) return 'milking_cow';
+    if (player.hand.includes('unicorn')) {
+      const others = aliveOthers(state, playerId);
+      if (others.some(o => o.hp === 1)) return 'unicorn';
+    }
     return null;
   },
 
   chooseAttackTarget(state, attackerId) {
     const others = aliveOthers(state, attackerId);
     if (others.length === 0) return -1;
-    // Target player with lowest HP, then most cards
+    others.sort((a, b) => {
+      const sA = threatScore(a) + (a.hp === 1 ? 5 : 0);
+      const sB = threatScore(b) + (b.hp === 1 ? 5 : 0);
+      return sB - sA;
+    });
+    return others[0].id;
+  },
+
+  shouldPlayGodMode(state, playerId, threat) {
+    if (!hasCard(state, playerId, 'god_mode')) return false;
+    const player = getPlayer(state, playerId);
+    const isTarget = threat.targetId === playerId;
+    const godModes = countCard(state, playerId, 'god_mode');
+
+    if (!isTarget) return false;
+
+    const hitProb = hitChance(threat.attackCardId);
+
+    if (player.hp === 1 && !player.hand.includes('insurance')) return true;
+    if (player.hp === 1 && hitProb >= 0.5 && godModes >= 1) return true;
+    if (player.hp === 2 && threat.attackCardId === 'c4_goat' && godModes >= 2) return true;
+    return false;
+  },
+
+  shouldPlayStopIt(state, playerId, targetTurnPlayerId) {
+    if (!hasCard(state, playerId, 'stop_it')) return false;
+    const player = getPlayer(state, playerId);
+    const target = getPlayer(state, targetTurnPlayerId);
+    const targetHasAttack = target.hand.some(c => CARD_DATABASE[c]?.type === 'attack');
+
+    // Panic-button case: 1 HP, no other defence, target can attack
+    if (player.hp === 1 && targetHasAttack) {
+      const hasOtherDefense =
+        player.hand.includes('god_mode') ||
+        player.hand.includes('redirect') ||
+        player.hand.includes('wrong_goat') ||
+        player.hand.includes('insurance') ||
+        player.stationaryCards.some(s => s.cardId === 'senile_grandma');
+      if (!hasOtherDefense) return true;
+    }
+
+    // Stop a leader who is about to play Oppenheimer + we have C4 to protect
+    if (target.hand.includes('oppenheimer') &&
+        player.hand.filter(c => c === 'c4_goat').length >= 2) {
+      return true;
+    }
+    return false;
+  },
+
+  shouldRedirect(state, playerId, attack) {
+    if (!hasCard(state, playerId, 'redirect')) return { play: false, newTargetId: -1 };
+    if (attack.targetId !== playerId) return { play: false, newTargetId: -1 };
+
+    const player = getPlayer(state, playerId);
+    const hitProb = hitChance(attack.attackCardId);
+
+    if (player.hp === 1 || hitProb >= 0.4) {
+      const others = aliveOthers(state, playerId).filter(p => p.id !== attack.attackerId);
+      if (others.length === 0) return { play: false, newTargetId: -1 };
+      others.sort((a, b) => threatScore(b) - threatScore(a));
+      return { play: true, newTargetId: others[0].id };
+    }
+    return { play: false, newTargetId: -1 };
+  },
+
+  shouldPlayWrongGoat(state, playerId, attack) {
+    if (!hasCard(state, playerId, 'wrong_goat')) return false;
+    if (attack.targetId !== playerId) return false;
+    const player = getPlayer(state, playerId);
+    if (player.hp === 1) return true;
+    if (hitChance(attack.attackCardId) >= 0.4) return true;
+    return false;
+  },
+
+  shouldPlayAdrenaline(state, playerId, attack, diceResult) {
+    if (!hasCard(state, playerId, 'adrenaline')) return false;
+    if (!attack) return false;
+    const threshold = ATTACK_HIT_THRESHOLD[attack.attackCardId] ?? 4;
+    const hit = diceResult >= threshold;
+
+    if (attack.attackerId === playerId) {
+      if (!hit) {
+        const target = state.players.find(p => p.id === attack.targetId);
+        if (target && target.hp === 1) return true;
+      }
+      return false;
+    }
+    if (attack.targetId === playerId) {
+      const player = getPlayer(state, playerId);
+      if (hit && player.hp === 1 && !player.hand.includes('insurance')) return true;
+    }
+    return false;
+  },
+
+  chooseSpecialtyCardsThisTurn(state, playerId) {
+    const player = getPlayer(state, playerId);
+    const others = aliveOthers(state, playerId);
+    const cards: string[] = [];
+
+    // PRIORITY 0: Free cards
+    if (player.hand.includes('loot_the_corpse') &&
+        state.players.some(p => p.isEliminated && p.hand.length > 0)) {
+      cards.push('loot_the_corpse');
+    }
+
+    // PRIORITY 1: Defensive panic
+    if (player.hp === 1 && player.hand.includes('silvertejp')) cards.push('silvertejp');
+    if (player.hp === 1 && player.hand.includes('senile_grandma') &&
+        !player.stationaryCards.some(s => s.cardId === 'senile_grandma')) {
+      cards.push('senile_grandma');
+    }
+
+    // PRIORITY 2: Combo setup
+    if (player.hand.includes('oppenheimer')) {
+      const c4InOpponentHands = others.reduce(
+        (sum, p) => sum + p.hand.filter(c => c === 'c4_goat').length, 0
+      );
+      if (c4InOpponentHands >= 1) cards.push('oppenheimer');
+    }
+
+    // PRIORITY 3: Resource gain
+    if (player.hand.length <= 5 && player.hand.includes('polacken')) cards.push('polacken');
+    if (player.hand.length <= 5 && player.hand.includes('begger') &&
+        others.some(o => o.hand.length >= 2)) cards.push('begger');
+
+    // PRIORITY 4: Disrupt leader
+    const leader = findLeader(state, playerId);
+    if (leader && player.hand.includes('steal') && leader.hand.length >= 4) cards.push('steal');
+    if (player.hand.includes('haunted_barn')) {
+      const candidate = others
+        .filter(o => !o.stationaryCards.some(s => s.cardId === 'haunted_barn'))
+        .sort((a, b) => a.hand.length - b.hand.length)[0];
+      if (candidate && candidate.hand.length <= 4) cards.push('haunted_barn');
+    }
+
+    // PRIORITY 5: Desperate measures
+    if (player.hp === 1 && player.hand.includes('identity_theft') &&
+        others.some(o => o.hp === 2)) {
+      cards.push('identity_theft');
+    }
+    if (player.hand.includes('moonshine_night')) {
+      const target = others.find(o => o.hand.length >= player.hand.length + 4);
+      if (target) cards.push('moonshine_night');
+    }
+    if (player.hand.includes('the_sacrifice')) {
+      const losingBadly = leader && (
+        leader.hp > player.hp ||
+        (leader.hp === player.hp && leader.hand.length >= player.hand.length + 3)
+      );
+      if (player.hp === 1) cards.push('the_sacrifice');
+      else if (player.hand.length >= 9) cards.push('the_sacrifice');
+      else if (losingBadly && player.hand.length >= 5) cards.push('the_sacrifice');
+    }
+
+    // PRIORITY 6: Utility
+    if (cards.length === 0 && player.hand.includes('skinny_dipping') && player.hand.length <= 6) {
+      cards.push('skinny_dipping');
+    }
+    if (cards.length === 0 && player.hand.includes('blottaren')) cards.push('blottaren');
+
+    // PACING: max 2 specialty cards / turn unless hand bloated
+    const unique = [...new Set(cards)];
+    if (player.hand.length < 9) return unique.slice(0, 2);
+    return unique;
+  },
+
+  chooseTargetForCard(state, playerId, cardId) {
+    const others = aliveOthers(state, playerId);
+    if (others.length === 0) return -1;
+
+    if (cardId === 'haunted_barn') {
+      return others.reduce((a, b) => a.hand.length < b.hand.length ? a : b).id;
+    }
+    if (cardId === 'identity_theft') {
+      return others.reduce((a, b) => a.hp > b.hp ? a : b).id;
+    }
+    if (cardId === 'moonshine_night' || cardId === 'steal') {
+      return others.reduce((a, b) => a.hand.length > b.hand.length ? a : b).id;
+    }
+    if (cardId === 'loot_the_corpse') {
+      const dead = state.players.filter(p => p.isEliminated && p.hand.length > 0);
+      return dead.length > 0 ? dead[0].id : -1;
+    }
+    if (cardId === 'skinny_dipping' || cardId === 'blottaren') {
+      const leader = findLeader(state, playerId);
+      return leader ? leader.id : others[0].id;
+    }
+    const leader = findLeader(state, playerId);
+    return leader ? leader.id : others[0].id;
+  },
+
+  chooseCardsToDiscard(state, playerId, count) {
+    const hand = [...getPlayer(state, playerId).hand];
+    const value: Record<string, number> = {
+      god_mode: 100, insurance: 95, c4_goat: 80, senile_grandma: 75,
+      silvertejp: 65, stop_it: 60, oppenheimer: 55, milking_cow: 52,
+      redirect: 48, wrong_goat: 42, polacken: 38, adrenaline: 35,
+      steal: 30, identity_theft: 25, begger: 22, the_sacrifice: 18,
+      haunted_barn: 16, loot_the_corpse: 15, moonshine_night: 14,
+      skinny_dipping: 10, blottaren: 8, unicorn: 6,
+    };
+    hand.sort((a, b) => (value[a] ?? 5) - (value[b] ?? 5));
+    return hand.slice(0, count);
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
+// AGGRESSIVE (Smart — aggressiv stil)
+// Same brain. Bias: attack more, use defensive cards freely, hunt kills.
+// ═══════════════════════════════════════════════════════════════
+
+const aggressive: StrategyFunctions = {
+  ...expert,
+
+  chooseAttackCard(state, playerId) {
+    // Aggressive: always swings if able. Even at 1 HP without protection
+    // (a real aggressive player gambles to take the leader down).
+    const player = getPlayer(state, playerId);
+    if (player.hand.length === 0) return null;
+    if (player.hand.includes('c4_goat')) return 'c4_goat';
+    if (player.hand.includes('milking_cow')) return 'milking_cow';
+    if (player.hand.includes('unicorn')) return 'unicorn';
+    return null;
+  },
+
+  chooseAttackTarget(state, attackerId) {
+    // Aggressive: kill-bias — pick the lowest-HP target, tiebreak by hand size.
+    const others = aliveOthers(state, attackerId);
+    if (others.length === 0) return -1;
     others.sort((a, b) => {
       if (a.hp !== b.hp) return a.hp - b.hp;
       return b.hand.length - a.hand.length;
@@ -61,39 +347,56 @@ const aggressive: StrategyFunctions = {
   },
 
   shouldPlayGodMode(state, playerId, threat) {
+    // Aggressive uses God Mode more freely (doesn't hoard for emergencies).
     if (!hasCard(state, playerId, 'god_mode')) return false;
-    return threat.targetId === playerId;
-  },
+    const player = getPlayer(state, playerId);
+    if (threat.targetId !== playerId) return false;
 
-  shouldPlayStopIt(state, playerId, targetTurnPlayerId) {
-    if (!hasCard(state, playerId, 'stop_it')) return false;
-    const others = aliveOthers(state, playerId);
-    if (others.length === 0) return false;
-    const leader = others.reduce((a, b) => a.hand.length > b.hand.length ? a : b);
-    return targetTurnPlayerId === leader.id;
+    const godModes = countCard(state, playerId, 'god_mode');
+    const hitProb = hitChance(threat.attackCardId);
+
+    if (player.hp === 1) return true; // always at 1 HP
+    if (hitProb >= 0.5 && godModes >= 2) return true; // C4 / Milking Cow at 2 HP if spares
+    return false;
   },
 
   shouldRedirect(state, playerId, attack) {
     if (!hasCard(state, playerId, 'redirect')) return { play: false, newTargetId: -1 };
     if (attack.targetId !== playerId) return { play: false, newTargetId: -1 };
-    const others = aliveOthers(state, playerId).filter(p => p.id !== attack.attackerId);
-    if (others.length === 0) return { play: false, newTargetId: -1 };
-    others.sort((a, b) => a.hp - b.hp);
-    return { play: true, newTargetId: others[0].id };
+
+    const player = getPlayer(state, playerId);
+    // Aggressive: redirect any meaningful threat (≥30% hit chance) and aim at the killable
+    if (player.hp === 1 || hitChance(attack.attackCardId) >= 0.3) {
+      const others = aliveOthers(state, playerId).filter(p => p.id !== attack.attackerId);
+      if (others.length === 0) return { play: false, newTargetId: -1 };
+      // Prefer lowest HP target (potential kill shot)
+      others.sort((a, b) => a.hp - b.hp);
+      return { play: true, newTargetId: others[0].id };
+    }
+    return { play: false, newTargetId: -1 };
   },
 
   shouldPlayWrongGoat(state, playerId, attack) {
     if (!hasCard(state, playerId, 'wrong_goat')) return false;
-    return attack.targetId === playerId;
+    if (attack.targetId !== playerId) return false;
+    return hitChance(attack.attackCardId) >= 0.3 || getPlayer(state, playerId).hp === 1;
   },
 
   shouldPlayAdrenaline(state, playerId, attack, diceResult) {
     if (!hasCard(state, playerId, 'adrenaline')) return false;
     if (!attack) return false;
-    // If we're the attacker and missed, reroll
+    const threshold = ATTACK_HIT_THRESHOLD[attack.attackCardId] ?? 4;
+    const hit = diceResult >= threshold;
+
     if (attack.attackerId === playerId) {
-      const threshold = ATTACK_HIT_THRESHOLD[attack.attackCardId] || 4;
-      return diceResult < threshold;
+      // Aggressive: reroll on miss against ANY target (not just 1 HP)
+      if (!hit) return true;
+      return false;
+    }
+    if (attack.targetId === playerId) {
+      const player = getPlayer(state, playerId);
+      // Reroll a hit at any HP if no insurance (or even at 2 HP — wants every advantage)
+      if (hit && (player.hp === 1 || !player.hand.includes('insurance'))) return true;
     }
     return false;
   },
@@ -103,297 +406,218 @@ const aggressive: StrategyFunctions = {
     const others = aliveOthers(state, playerId);
     const cards: string[] = [];
 
-    if (player.hand.includes('oppenheimer')) cards.push('oppenheimer');
-    if (player.hand.includes('polacken')) cards.push('polacken');
-    if (player.hand.includes('begger')) cards.push('begger');
-    if (player.hand.includes('steal')) cards.push('steal');
-    if (player.hand.includes('blottaren')) cards.push('blottaren');
-    if (player.hand.includes('skinny_dipping')) cards.push('skinny_dipping');
-    if (player.hand.includes('the_sacrifice')) cards.push('the_sacrifice');
-    if (player.hand.includes('haunted_barn')) cards.push('haunted_barn');
-    if (player.hand.includes('identity_theft') && others.some(o => o.hp > player.hp)) cards.push('identity_theft');
-    if (player.hand.includes('moonshine_night') && others.some(o => o.hand.length >= player.hand.length + 3)) cards.push('moonshine_night');
-    if (player.hand.includes('loot_the_corpse') && state.players.some(p => p.isEliminated && p.hand.length > 0)) cards.push('loot_the_corpse');
-    if (player.hand.includes('senile_grandma') && !player.stationaryCards.some(s => s.cardId === 'senile_grandma') && (player.hp <= 1 || player.hand.length > 6)) {
+    // Always loot
+    if (player.hand.includes('loot_the_corpse') &&
+        state.players.some(p => p.isEliminated && p.hand.length > 0)) {
+      cards.push('loot_the_corpse');
+    }
+    // Survival at 1 HP
+    if (player.hp === 1 && player.hand.includes('silvertejp')) cards.push('silvertejp');
+    if (player.hp === 1 && player.hand.includes('senile_grandma') &&
+        !player.stationaryCards.some(s => s.cardId === 'senile_grandma')) {
       cards.push('senile_grandma');
     }
-    if (player.hp <= 1 && player.hand.includes('silvertejp')) cards.push('silvertejp');
 
-    return [...new Set(cards)];
-  },
+    // Aggressive bias: Oppenheimer almost always (don't wait for the perfect c4 count)
+    if (player.hand.includes('oppenheimer')) cards.push('oppenheimer');
 
-  chooseTargetForCard(state, playerId, cardId) {
-    const others = aliveOthers(state, playerId);
-    if (others.length === 0) return -1;
+    // Resources at slightly higher hand sizes
+    if (player.hand.length <= 6 && player.hand.includes('polacken')) cards.push('polacken');
+    if (player.hand.length <= 6 && player.hand.includes('begger') &&
+        others.some(o => o.hand.length >= 2)) cards.push('begger');
 
-    if (cardId === 'steal') {
-      return others.reduce((a, b) => a.hand.length > b.hand.length ? a : b).id;
-    }
-    if (cardId === 'haunted_barn') {
-      return others.reduce((a, b) => a.hand.length < b.hand.length ? a : b).id;
-    }
-    if (cardId === 'identity_theft') {
-      return others.reduce((a, b) => a.hp > b.hp ? a : b).id;
-    }
-    if (cardId === 'loot_the_corpse') {
-      const dead = state.players.filter(p => p.isEliminated && p.hand.length > 0);
-      return dead.length > 0 ? dead[0].id : -1;
-    }
-    if (cardId === 'moonshine_night') {
-      return others.reduce((a, b) => a.hand.length > b.hand.length ? a : b).id;
-    }
-    // Default: target weakest
-    return others.reduce((a, b) => a.hp < b.hp ? a : b).id;
-  },
+    // Steal at lower threshold
+    const leader = findLeader(state, playerId);
+    if (leader && player.hand.includes('steal') && leader.hand.length >= 3) cards.push('steal');
 
-  chooseCardsToDiscard(state, playerId, count) {
-    const hand = [...getPlayer(state, playerId).hand];
-    // Keep attack cards and god_mode/insurance, discard least valuable
-    const priority = ['insurance', 'god_mode', 'c4_goat', 'milking_cow', 'stop_it', 'redirect', 'adrenaline'];
-    hand.sort((a, b) => {
-      const aP = priority.indexOf(a);
-      const bP = priority.indexOf(b);
-      return (bP === -1 ? -1 : bP) - (aP === -1 ? -1 : aP);
-    });
-    return hand.slice(0, count);
+    if (player.hand.includes('haunted_barn')) {
+      const candidate = others
+        .filter(o => !o.stationaryCards.some(s => s.cardId === 'haunted_barn'))
+        .sort((a, b) => a.hand.length - b.hand.length)[0];
+      if (candidate && candidate.hand.length <= 5) cards.push('haunted_barn');
+    }
+
+    // Identity Theft / Moonshine — same as expert
+    if (player.hp === 1 && player.hand.includes('identity_theft') &&
+        others.some(o => o.hp === 2)) cards.push('identity_theft');
+    if (player.hand.includes('moonshine_night')) {
+      const target = others.find(o => o.hand.length >= player.hand.length + 3);
+      if (target) cards.push('moonshine_night');
+    }
+
+    // Aggressive bias: The Sacrifice gambles more freely
+    if (player.hand.includes('the_sacrifice')) {
+      if (player.hp === 1) cards.push('the_sacrifice');
+      else if (player.hand.length >= 7) cards.push('the_sacrifice');
+      else if (leader && leader.hp >= player.hp && player.hand.length >= 4) {
+        cards.push('the_sacrifice'); // catch-up gamble
+      }
+    }
+
+    if (cards.length === 0 && player.hand.includes('skinny_dipping')) cards.push('skinny_dipping');
+    if (cards.length === 0 && player.hand.includes('blottaren')) cards.push('blottaren');
+
+    // Aggressive PACING: up to 3 specialty cards / turn
+    const unique = [...new Set(cards)];
+    if (player.hand.length < 9) return unique.slice(0, 3);
+    return unique;
   },
 };
 
-// ─── DEFENSIVE ──────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// DEFENSIVE (Smart — defensiv stil)
+// Same brain. Bias: hoard defensive cards, attack only from safety.
+// ═══════════════════════════════════════════════════════════════
 
 const defensive: StrategyFunctions = {
+  ...expert,
+
   chooseAttackCard(state, playerId) {
     const player = getPlayer(state, playerId);
+    // Defensive: only attacks at FULL HP (2). Avoids drawing attention while wounded.
     if (player.hp < 2) return null;
+    // Skip Unicorn — too low hit chance, hand it as discard fodder later
     if (player.hand.includes('c4_goat')) return 'c4_goat';
     if (player.hand.includes('milking_cow')) return 'milking_cow';
     return null;
   },
 
   chooseAttackTarget(state, attackerId) {
+    // Defensive: disrupt the most-cards player (limit their threat), tiebreak by lowest HP
     const others = aliveOthers(state, attackerId);
     if (others.length === 0) return -1;
-    // Target biggest threat (most cards = potential attacks)
-    others.sort((a, b) => b.hand.length - a.hand.length);
-    return others[0].id;
-  },
-
-  shouldPlayGodMode(state, playerId, threat) {
-    if (!hasCard(state, playerId, 'god_mode')) return false;
-    return threat.targetId === playerId;
-  },
-
-  shouldPlayStopIt(state, playerId, targetTurnPlayerId) {
-    if (!hasCard(state, playerId, 'stop_it')) return false;
-    const player = getPlayer(state, playerId);
-    return player.hp < 2;
-  },
-
-  shouldRedirect(state, playerId, attack) {
-    if (!hasCard(state, playerId, 'redirect')) return { play: false, newTargetId: -1 };
-    if (attack.targetId !== playerId) return { play: false, newTargetId: -1 };
-    const player = getPlayer(state, playerId);
-    if (player.hp >= 2) return { play: false, newTargetId: -1 };
-    const others = aliveOthers(state, playerId).filter(p => p.id !== attack.attackerId);
-    if (others.length === 0) return { play: false, newTargetId: -1 };
-    others.sort((a, b) => b.hand.length - a.hand.length);
-    return { play: true, newTargetId: others[0].id };
-  },
-
-  shouldPlayWrongGoat(state, playerId, attack) {
-    if (!hasCard(state, playerId, 'wrong_goat')) return false;
-    return attack.targetId === playerId;
-  },
-
-  shouldPlayAdrenaline(state, playerId, attack, diceResult) {
-    if (!hasCard(state, playerId, 'adrenaline')) return false;
-    if (!attack) return false;
-    // Only if we're the target and the attack hit
-    if (attack.targetId === playerId) {
-      const threshold = ATTACK_HIT_THRESHOLD[attack.attackCardId] || 4;
-      return diceResult >= threshold;
-    }
-    return false;
-  },
-
-  chooseSpecialtyCardsThisTurn(state, playerId) {
-    const player = getPlayer(state, playerId);
-    const others = aliveOthers(state, playerId);
-    const cards: string[] = [];
-
-    if (player.hand.includes('polacken')) cards.push('polacken');
-    if (player.hand.includes('senile_grandma') && !player.stationaryCards.some(s => s.cardId === 'senile_grandma')) {
-      cards.push('senile_grandma');
-    }
-    if (player.hp <= 1 && player.hand.includes('silvertejp')) cards.push('silvertejp');
-    if (player.hand.includes('haunted_barn')) cards.push('haunted_barn');
-    if (player.hand.includes('begger')) cards.push('begger');
-    if (player.hand.includes('steal')) cards.push('steal');
-    if (player.hand.includes('loot_the_corpse') && state.players.some(p => p.isEliminated && p.hand.length > 0)) cards.push('loot_the_corpse');
-    if (player.hand.includes('blottaren')) cards.push('blottaren');
-    if (player.hand.includes('skinny_dipping')) cards.push('skinny_dipping');
-    if (player.hp === 2 && player.hand.includes('the_sacrifice')) cards.push('the_sacrifice');
-    if (player.hp === 1 && player.hand.includes('identity_theft') && others.some(o => o.hp === 2)) cards.push('identity_theft');
-    if (player.hand.includes('moonshine_night') && others.some(o => o.hand.length >= player.hand.length + 4)) cards.push('moonshine_night');
-
-    return [...new Set(cards)];
-  },
-
-  chooseTargetForCard(state, playerId, cardId) {
-    const others = aliveOthers(state, playerId);
-    if (others.length === 0) return -1;
-
-    if (cardId === 'haunted_barn') {
-      return others.reduce((a, b) => a.hand.length < b.hand.length ? a : b).id;
-    }
-    if (cardId === 'identity_theft') {
-      return others.reduce((a, b) => a.hp > b.hp ? a : b).id;
-    }
-    if (cardId === 'steal') {
-      return others.reduce((a, b) => a.hand.length > b.hand.length ? a : b).id;
-    }
-    if (cardId === 'loot_the_corpse') {
-      const dead = state.players.filter(p => p.isEliminated && p.hand.length > 0);
-      return dead.length > 0 ? dead[0].id : -1;
-    }
-    return others[0].id;
-  },
-
-  chooseCardsToDiscard(state, playerId, count) {
-    const hand = [...getPlayer(state, playerId).hand];
-    // Never discard god_mode or insurance
-    const keep = ['god_mode', 'insurance', 'stop_it', 'redirect', 'senile_grandma', 'silvertejp'];
-    const discardable = hand.filter(c => !keep.includes(c));
-    if (discardable.length >= count) return discardable.slice(0, count);
-    return hand.slice(0, count);
-  },
-};
-
-// ─── BALANCED ───────────────────────────────────────────────
-
-const balanced: StrategyFunctions = {
-  chooseAttackCard(state, playerId) {
-    const player = getPlayer(state, playerId);
-    if (player.hp < 1) return null;
-    if (player.hand.includes('c4_goat')) return 'c4_goat';
-    if (player.hand.includes('milking_cow')) return 'milking_cow';
-    return null;
-  },
-
-  chooseAttackTarget(state, attackerId) {
-    const others = aliveOthers(state, attackerId);
-    if (others.length === 0) return -1;
-    // Target the "leader" — score = HP * 2 + hand.length / 3
-    others.sort((a, b) => {
-      const scoreA = a.hp * 2 + a.hand.length / 3;
-      const scoreB = b.hp * 2 + b.hand.length / 3;
-      return scoreB - scoreA;
+    // Avoid attacking someone with Grandma (waste of attack)
+    const viable = others.filter(o => !o.stationaryCards.some(s => s.cardId === 'senile_grandma'));
+    const candidates = viable.length > 0 ? viable : others;
+    candidates.sort((a, b) => {
+      if (a.hand.length !== b.hand.length) return b.hand.length - a.hand.length;
+      return a.hp - b.hp;
     });
-    return others[0].id;
+    return candidates[0].id;
   },
 
   shouldPlayGodMode(state, playerId, threat) {
     if (!hasCard(state, playerId, 'god_mode')) return false;
+    const player = getPlayer(state, playerId);
     if (threat.targetId !== playerId) return false;
-    const player = getPlayer(state, playerId);
-    if (player.hp <= 1) return true;
-    // 50% chance otherwise (use deterministic check based on turn number)
-    return state.turnNumber % 2 === 0;
-  },
 
-  shouldPlayStopIt(state, playerId, targetTurnPlayerId) {
-    if (!hasCard(state, playerId, 'stop_it')) return false;
-    const player = getPlayer(state, playerId);
-    if (player.hp <= 1) return true;
+    const godModes = countCard(state, playerId, 'god_mode');
+    const hitProb = hitChance(threat.attackCardId);
+
+    // Defensive: conserves God Mode aggressively
+    if (player.hp === 1 && !player.hand.includes('insurance')) return true;
+    if (player.hp === 1 && hitProb >= 0.5) return true;
+    // At 2 HP: only nope C4 AND we must have ≥3 god_modes (very conservative)
+    if (player.hp === 2 && threat.attackCardId === 'c4_goat' && godModes >= 3) return true;
     return false;
   },
 
   shouldRedirect(state, playerId, attack) {
     if (!hasCard(state, playerId, 'redirect')) return { play: false, newTargetId: -1 };
     if (attack.targetId !== playerId) return { play: false, newTargetId: -1 };
-    const others = aliveOthers(state, playerId).filter(p => p.id !== attack.attackerId);
-    if (others.length === 0) return { play: false, newTargetId: -1 };
-    // Redirect to player with highest score
-    others.sort((a, b) => (b.hp * 2 + b.hand.length / 3) - (a.hp * 2 + a.hand.length / 3));
-    return { play: true, newTargetId: others[0].id };
+
+    const player = getPlayer(state, playerId);
+    const hitProb = hitChance(attack.attackCardId);
+
+    // Defensive: slightly higher threshold (≥50%) to save Redirect for real threats
+    if (player.hp === 1 || hitProb >= 0.5) {
+      const others = aliveOthers(state, playerId).filter(p => p.id !== attack.attackerId);
+      if (others.length === 0) return { play: false, newTargetId: -1 };
+      others.sort((a, b) => threatScore(b) - threatScore(a));
+      return { play: true, newTargetId: others[0].id };
+    }
+    return { play: false, newTargetId: -1 };
   },
 
   shouldPlayWrongGoat(state, playerId, attack) {
     if (!hasCard(state, playerId, 'wrong_goat')) return false;
-    return attack.targetId === playerId;
+    if (attack.targetId !== playerId) return false;
+    const player = getPlayer(state, playerId);
+    if (player.hp === 1) return true;
+    return hitChance(attack.attackCardId) >= 0.5; // tighter than expert's 0.4
   },
 
   shouldPlayAdrenaline(state, playerId, attack, diceResult) {
     if (!hasCard(state, playerId, 'adrenaline')) return false;
     if (!attack) return false;
-    if (attack.attackerId === playerId) {
-      const threshold = ATTACK_HIT_THRESHOLD[attack.attackCardId] || 4;
-      return diceResult < threshold;
-    }
+    const threshold = ATTACK_HIT_THRESHOLD[attack.attackCardId] ?? 4;
+    const hit = diceResult >= threshold;
+
+    // Defensive: only reroll to save own skin
     if (attack.targetId === playerId) {
-      const threshold = ATTACK_HIT_THRESHOLD[attack.attackCardId] || 4;
-      return diceResult >= threshold;
+      const player = getPlayer(state, playerId);
+      if (hit && player.hp === 1 && !player.hand.includes('insurance')) return true;
     }
     return false;
   },
 
   chooseSpecialtyCardsThisTurn(state, playerId) {
     const player = getPlayer(state, playerId);
+    const others = aliveOthers(state, playerId);
     const cards: string[] = [];
 
-    if (player.hand.includes('oppenheimer')) cards.push('oppenheimer');
-    if (player.hp <= 1 && player.hand.includes('senile_grandma') && !player.stationaryCards.some(s => s.cardId === 'senile_grandma')) {
-      cards.push('senile_grandma');
-    }
-    if (player.hand.length > 6 && player.hand.includes('senile_grandma') && !player.stationaryCards.some(s => s.cardId === 'senile_grandma')) {
-      cards.push('senile_grandma');
-    }
-    if (player.hp <= 1 && player.hand.includes('silvertejp')) cards.push('silvertejp');
-    if (player.hand.includes('polacken')) cards.push('polacken');
-    if (player.hand.includes('steal')) cards.push('steal');
-    if (player.hand.includes('haunted_barn')) cards.push('haunted_barn');
-    if (player.hand.includes('begger')) cards.push('begger');
-
-    // Keep hand under 8 cards
-    if (player.hand.length > 8) {
-      if (player.hand.includes('skinny_dipping')) cards.push('skinny_dipping');
-      if (player.hand.includes('the_sacrifice')) cards.push('the_sacrifice');
+    // Always loot
+    if (player.hand.includes('loot_the_corpse') &&
+        state.players.some(p => p.isEliminated && p.hand.length > 0)) {
+      cards.push('loot_the_corpse');
     }
 
-    return [...new Set(cards)];
-  },
-
-  chooseTargetForCard(state, playerId, cardId) {
-    const others = aliveOthers(state, playerId);
-    if (others.length === 0) return -1;
-
-    // Target the leader
-    const leader = others.reduce((a, b) => {
-      const scoreA = a.hp * 2 + a.hand.length / 3;
-      const scoreB = b.hp * 2 + b.hand.length / 3;
-      return scoreA > scoreB ? a : b;
-    });
-
-    if (cardId === 'haunted_barn') {
-      return others.reduce((a, b) => a.hand.length < b.hand.length ? a : b).id;
+    // DEFENSIVE BIAS: Place Grandma EARLY (even at 2 HP) if a leader has attack cards
+    const leader = findLeader(state, playerId);
+    if (player.hand.includes('senile_grandma') &&
+        !player.stationaryCards.some(s => s.cardId === 'senile_grandma')) {
+      const leaderHasAttack = leader && leader.hand.some(c => CARD_DATABASE[c]?.type === 'attack');
+      if (player.hp === 1 || leaderHasAttack) cards.push('senile_grandma');
     }
-    if (cardId === 'loot_the_corpse') {
-      const dead = state.players.filter(p => p.isEliminated && p.hand.length > 0);
-      return dead.length > 0 ? dead[0].id : -1;
-    }
-    return leader.id;
-  },
 
-  chooseCardsToDiscard(state, playerId, count) {
-    const hand = [...getPlayer(state, playerId).hand];
-    const keep = ['insurance', 'god_mode', 'c4_goat'];
-    const discardable = hand.filter(c => !keep.includes(c));
-    if (discardable.length >= count) return discardable.slice(0, count);
-    return hand.slice(0, count);
+    // Heal aggressively at 1 HP
+    if (player.hp === 1 && player.hand.includes('silvertejp')) cards.push('silvertejp');
+
+    // Resources (loves Polacken — more cards = more defence)
+    if (player.hand.length <= 6 && player.hand.includes('polacken')) cards.push('polacken');
+    if (player.hand.length <= 5 && player.hand.includes('begger') &&
+        others.some(o => o.hand.length >= 2)) cards.push('begger');
+
+    // Oppenheimer only if leader has many C4s
+    if (player.hand.includes('oppenheimer')) {
+      const c4InOpponentHands = others.reduce(
+        (sum, p) => sum + p.hand.filter(c => c === 'c4_goat').length, 0
+      );
+      if (c4InOpponentHands >= 2) cards.push('oppenheimer');
+    }
+
+    // Steal only against a clearly-loaded leader
+    if (leader && player.hand.includes('steal') && leader.hand.length >= 5) cards.push('steal');
+
+    // Haunted Barn — wait for very small hand
+    if (player.hand.includes('haunted_barn')) {
+      const candidate = others
+        .filter(o => !o.stationaryCards.some(s => s.cardId === 'haunted_barn'))
+        .sort((a, b) => a.hand.length - b.hand.length)[0];
+      if (candidate && candidate.hand.length <= 3) cards.push('haunted_barn');
+    }
+
+    // Defensive: only swap identity at 1 HP, only mix hands when really desperate
+    if (player.hp === 1 && player.hand.includes('identity_theft') &&
+        others.some(o => o.hp === 2)) cards.push('identity_theft');
+    if (player.hand.includes('moonshine_night')) {
+      const target = others.find(o => o.hand.length >= player.hand.length + 5);
+      if (target) cards.push('moonshine_night');
+    }
+
+    // The Sacrifice ONLY at 1 HP — defensive never gambles when healthy
+    if (player.hp === 1 && player.hand.includes('the_sacrifice')) cards.push('the_sacrifice');
+
+    // No utility filler — defensive holds cards until they matter
+    const unique = [...new Set(cards)];
+    if (player.hand.length < 9) return unique.slice(0, 2);
+    return unique;
   },
 };
 
-// ─── RANDOM ─────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// NAIVE (random) — baseline control. Picks randomly with low awareness.
+// ═══════════════════════════════════════════════════════════════
 
 const randomStrategy: StrategyFunctions = {
   chooseAttackCard(state, playerId) {
@@ -414,11 +638,13 @@ const randomStrategy: StrategyFunctions = {
   },
 
   shouldPlayStopIt(state, playerId) {
-    return hasCard(state, playerId, 'stop_it') && Math.random() < 0.5;
+    return hasCard(state, playerId, 'stop_it') && Math.random() < 0.3;
   },
 
   shouldRedirect(state, playerId, attack) {
-    if (!hasCard(state, playerId, 'redirect') || Math.random() < 0.5) return { play: false, newTargetId: -1 };
+    if (!hasCard(state, playerId, 'redirect') || Math.random() < 0.5) {
+      return { play: false, newTargetId: -1 };
+    }
     const others = aliveOthers(state, playerId).filter(p => p.id !== attack.attackerId);
     if (others.length === 0) return { play: false, newTargetId: -1 };
     return { play: true, newTargetId: others[Math.floor(Math.random() * others.length)].id };
@@ -449,7 +675,6 @@ const randomStrategy: StrategyFunctions = {
 
   chooseCardsToDiscard(state, playerId, count) {
     const hand = [...getPlayer(state, playerId).hand];
-    // Shuffle and take first N
     for (let i = hand.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [hand[i], hand[j]] = [hand[j], hand[i]];
@@ -458,387 +683,13 @@ const randomStrategy: StrategyFunctions = {
   },
 };
 
-// ─── EXPERT ─────────────────────────────────────────────────
-//
-// Plays like a thoughtful human with full information. Key principles:
-//   • Threat assessment   – attack the LEADER, not the weakest
-//   • Resource pacing     – max 2 specialty cards per turn (unless hand bloated)
-//   • Combo awareness     – Oppenheimer BEFORE C4 attacks
-//   • Defensive economy   – God Mode only on likely-lethal threats
-//   • Endgame instinct    – aggressive once only 2 players remain
-//
-// Helper: composite threat score for a player.
-//   HP weighs heaviest (×10) because surviving = winning.
-//   Hand size matters (more options = more threat).
-//   Attack cards in hand are scored extra.
-//   Stationary defenders (Grandma) make a player LESS attractive to attack.
-
-function threatScore(p: PlayerState): number {
-  let s = p.hp * 10 + p.hand.length * 0.5;
-  const attacks = p.hand.filter(c => CARD_DATABASE[c]?.type === 'attack').length;
-  s += attacks * 2;
-  if (p.stationaryCards.some(x => x.cardId === 'senile_grandma')) s -= 8;
-  if (p.hand.includes('insurance') && !p.hasUsedInsurance) s += 3; // harder to kill = more dangerous
-  return s;
-}
-
-function findLeader(state: GameState, excludeId: number): PlayerState | null {
-  const others = state.players.filter(p => !p.isEliminated && p.id !== excludeId);
-  if (others.length === 0) return null;
-  return others.reduce((a, b) => threatScore(a) > threatScore(b) ? a : b);
-}
-
-function hitChance(cardId: string): number {
-  const threshold = ATTACK_HIT_THRESHOLD[cardId];
-  if (!threshold) return 0;
-  return (7 - threshold) / 6; // p(roll >= threshold)
-}
-
-const expert: StrategyFunctions = {
-  chooseAttackCard(state, playerId) {
-    const player = getPlayer(state, playerId);
-    if (player.hand.length === 0) return null;
-
-    // Endgame: with one opponent left, attack hard with anything
-    const alive = alivePlayers(state).length;
-    if (alive === 2) {
-      if (player.hand.includes('c4_goat')) return 'c4_goat';
-      if (player.hand.includes('milking_cow')) return 'milking_cow';
-      if (player.hand.includes('unicorn')) return 'unicorn';
-      return null;
-    }
-
-    // At 1 HP with no protection, lay low (don't reveal yourself)
-    if (player.hp === 1) {
-      const hasProtection =
-        player.hand.includes('god_mode') || player.hand.includes('insurance');
-      if (!hasProtection) return null;
-    }
-
-    // Prefer highest-hit chance
-    if (player.hand.includes('c4_goat')) return 'c4_goat';
-    if (player.hand.includes('milking_cow')) return 'milking_cow';
-    // Unicorn is risky — only use when it would matter (target at 1 HP)
-    if (player.hand.includes('unicorn')) {
-      const others = aliveOthers(state, playerId);
-      if (others.some(o => o.hp === 1)) return 'unicorn';
-    }
-    return null;
-  },
-
-  chooseAttackTarget(state, attackerId) {
-    const others = aliveOthers(state, attackerId);
-    if (others.length === 0) return -1;
-
-    // Always attack the highest-threat player.
-    // Tiebreaker: prefer 1 HP over 2 HP (killing blow opportunity)
-    others.sort((a, b) => {
-      const sA = threatScore(a) + (a.hp === 1 ? 5 : 0);
-      const sB = threatScore(b) + (b.hp === 1 ? 5 : 0);
-      return sB - sA;
-    });
-    return others[0].id;
-  },
-
-  shouldPlayGodMode(state, playerId, threat) {
-    if (!hasCard(state, playerId, 'god_mode')) return false;
-
-    const player = getPlayer(state, playerId);
-    const isTarget = threat.targetId === playerId;
-    const godModes = countCard(state, playerId, 'god_mode');
-
-    // Only react if we're the target (avoid wasting on others unless we have spares)
-    if (!isTarget) {
-      // Use spare god_mode if a powerful redirect chain is hitting us indirectly
-      return false;
-    }
-
-    const hitProb = hitChance(threat.attackCardId);
-
-    // ALWAYS nope if at 1 HP AND no insurance (would die)
-    if (player.hp === 1 && !player.hand.includes('insurance')) return true;
-
-    // At 1 HP with insurance: only nope if likely hit (save insurance for later threats)
-    if (player.hp === 1 && hitProb >= 0.5 && godModes >= 1) return true;
-
-    // At 2 HP: only nope C4 (the only attack with 66% hit chance)
-    // AND only if we have ≥2 god_mode (don't burn your last one)
-    if (player.hp === 2 && threat.attackCardId === 'c4_goat' && godModes >= 2) {
-      return true;
-    }
-
-    return false;
-  },
-
-  shouldPlayStopIt(state, playerId, targetTurnPlayerId) {
-    if (!hasCard(state, playerId, 'stop_it')) return false;
-
-    const player = getPlayer(state, playerId);
-    const target = getPlayer(state, targetTurnPlayerId);
-
-    // Stop It is a panic button — only used when:
-    //   (a) I CANNOT survive an incoming hit (1 HP + no other defenses), OR
-    //   (b) Target has Oppenheimer AND I have C4s worth protecting.
-    //
-    // Critically: NEVER played at 2 HP "just in case" or on opening turns.
-    // It's strictly a last resort.
-
-    const targetHasAttack = target.hand.some(c => CARD_DATABASE[c]?.type === 'attack');
-
-    // (a) Survival case: 1 HP, target can attack, no other defense available
-    if (player.hp === 1 && targetHasAttack) {
-      const hasOtherDefense =
-        player.hand.includes('god_mode') ||
-        player.hand.includes('redirect') ||
-        player.hand.includes('wrong_goat') ||
-        player.hand.includes('insurance') ||
-        player.stationaryCards.some(s => s.cardId === 'senile_grandma');
-      if (!hasOtherDefense) return true;
-    }
-
-    // (b) Oppenheimer disruption case: target is about to wipe my C4 stockpile
-    if (target.hand.includes('oppenheimer') &&
-        player.hand.filter(c => c === 'c4_goat').length >= 2) {
-      return true;
-    }
-
-    return false;
-  },
-
-  shouldRedirect(state, playerId, attack) {
-    if (!hasCard(state, playerId, 'redirect')) return { play: false, newTargetId: -1 };
-    if (attack.targetId !== playerId) return { play: false, newTargetId: -1 };
-
-    const player = getPlayer(state, playerId);
-    const hitProb = hitChance(attack.attackCardId);
-
-    // Redirect is a cheap defensive card. PREFER it over God Mode at 2 HP
-    // because it not only saves us but also pushes the attack onto a threat.
-    //   At 1 HP: any incoming attack we redirect (better safe).
-    //   At 2 HP: redirect any attack with ≥40% hit chance (C4, Milking Cow).
-    if (player.hp === 1 || hitProb >= 0.4) {
-      const others = aliveOthers(state, playerId).filter(p => p.id !== attack.attackerId);
-      if (others.length === 0) return { play: false, newTargetId: -1 };
-      others.sort((a, b) => threatScore(b) - threatScore(a));
-      return { play: true, newTargetId: others[0].id };
-    }
-    return { play: false, newTargetId: -1 };
-  },
-
-  shouldPlayWrongGoat(state, playerId, attack) {
-    if (!hasCard(state, playerId, 'wrong_goat')) return false;
-    if (attack.targetId !== playerId) return false;
-
-    const player = getPlayer(state, playerId);
-    const hitProb = hitChance(attack.attackCardId);
-
-    // Wrong Goat is similar to Redirect but auto-targets the most-cards player.
-    //   At 1 HP: any attack.
-    //   At 2 HP: any attack with ≥40% hit chance (C4, Milking Cow).
-    if (player.hp === 1) return true;
-    if (hitProb >= 0.4) return true;
-    return false;
-  },
-
-  shouldPlayAdrenaline(state, playerId, attack, diceResult) {
-    if (!hasCard(state, playerId, 'adrenaline')) return false;
-    if (!attack) return false;
-
-    const threshold = ATTACK_HIT_THRESHOLD[attack.attackCardId] ?? 4;
-    const hit = diceResult >= threshold;
-
-    if (attack.attackerId === playerId) {
-      // Reroll on miss only if killing blow available (target at 1 HP)
-      if (!hit) {
-        const target = state.players.find(p => p.id === attack.targetId);
-        if (target && target.hp === 1) return true;
-      }
-      return false;
-    }
-
-    if (attack.targetId === playerId) {
-      const player = getPlayer(state, playerId);
-      // Reroll only if hit AND at 1 HP AND no insurance to fall back on
-      if (hit && player.hp === 1 && !player.hand.includes('insurance')) return true;
-    }
-
-    return false;
-  },
-
-  chooseSpecialtyCardsThisTurn(state, playerId) {
-    const player = getPlayer(state, playerId);
-    const others = aliveOthers(state, playerId);
-    const cards: string[] = [];
-
-    // ── PRIORITY 0: FREE CARDS — always take ──
-
-    // Loot the Corpse is essentially free cards from a dead player. Top priority.
-    if (player.hand.includes('loot_the_corpse') &&
-        state.players.some(p => p.isEliminated && p.hand.length > 0)) {
-      cards.push('loot_the_corpse');
-    }
-
-    // ── PRIORITY 1: Defensive / setup cards ──
-
-    // Silvertejp at 1 HP (heal first, before risking attack)
-    if (player.hp === 1 && player.hand.includes('silvertejp')) {
-      cards.push('silvertejp');
-    }
-
-    // Senile Grandma at 1 HP (absorb next attack)
-    if (player.hp === 1 && player.hand.includes('senile_grandma') &&
-        !player.stationaryCards.some(s => s.cardId === 'senile_grandma')) {
-      cards.push('senile_grandma');
-    }
-
-    // ── PRIORITY 2: Combo setup ──
-
-    // Oppenheimer BEFORE attacks (combo). Only if opponents actually have C4.
-    if (player.hand.includes('oppenheimer')) {
-      const c4InOpponentHands = others.reduce(
-        (sum, p) => sum + p.hand.filter(c => c === 'c4_goat').length, 0
-      );
-      if (c4InOpponentHands >= 1) cards.push('oppenheimer');
-    }
-
-    // ── PRIORITY 3: Resource gain (hand-management) ──
-
-    // Polacken when hand is small
-    if (player.hand.length <= 5 && player.hand.includes('polacken')) {
-      cards.push('polacken');
-    }
-
-    // Begger when hand is small AND opponents have hands to give
-    if (player.hand.length <= 5 && player.hand.includes('begger') &&
-        others.some(o => o.hand.length >= 2)) {
-      cards.push('begger');
-    }
-
-    // ── PRIORITY 4: Disrupt leader ──
-
-    const leader = findLeader(state, playerId);
-
-    // Steal against leader if their hand is big
-    if (leader && player.hand.includes('steal') && leader.hand.length >= 4) {
-      cards.push('steal');
-    }
-
-    // Haunted Barn on opponent with smallest hand (most likely to trigger)
-    if (player.hand.includes('haunted_barn')) {
-      const candidate = others
-        .filter(o => !o.stationaryCards.some(s => s.cardId === 'haunted_barn'))
-        .sort((a, b) => a.hand.length - b.hand.length)[0];
-      if (candidate && candidate.hand.length <= 4) cards.push('haunted_barn');
-    }
-
-    // ── PRIORITY 5: Desperate measures ──
-
-    // Identity Theft at 1 HP if opponent has 2 HP
-    if (player.hp === 1 && player.hand.includes('identity_theft') &&
-        others.some(o => o.hp === 2)) {
-      cards.push('identity_theft');
-    }
-
-    // Moonshine if opponent's hand is significantly bigger
-    if (player.hand.includes('moonshine_night')) {
-      const target = others.find(o => o.hand.length >= player.hand.length + 4);
-      if (target) cards.push('moonshine_night');
-    }
-
-    // The Sacrifice — positive EV most of the time (~46% good outcomes,
-    // ~12% painful, 1% Nuke). Play when:
-    //   - Desperate (1 HP) — gamble for catch-up
-    //   - Hand bloated (≥9) — need disruption
-    //   - Behind on tempo (opponent has noticeably more HP/cards) and
-    //     we still have ≥5 cards to absorb a bad outcome
-    if (player.hand.includes('the_sacrifice')) {
-      const leader = findLeader(state, playerId);
-      const losingBadly = leader && (
-        leader.hp > player.hp ||
-        (leader.hp === player.hp && leader.hand.length >= player.hand.length + 3)
-      );
-      if (player.hp === 1) {
-        cards.push('the_sacrifice');
-      } else if (player.hand.length >= 9) {
-        cards.push('the_sacrifice');
-      } else if (losingBadly && player.hand.length >= 5) {
-        cards.push('the_sacrifice');
-      }
-    }
-
-    // ── PRIORITY 6: Utility (if nothing else to do) ──
-
-    if (cards.length === 0 && player.hand.includes('skinny_dipping') &&
-        player.hand.length <= 6) {
-      cards.push('skinny_dipping');
-    }
-
-    // Blottaren is information-only — low priority
-    if (cards.length === 0 && player.hand.includes('blottaren')) {
-      cards.push('blottaren');
-    }
-
-    // ── PACING ── Cap at 2 specialty cards per turn unless hand is bloated.
-    const unique = [...new Set(cards)];
-    if (player.hand.length < 9) return unique.slice(0, 2);
-    return unique;
-  },
-
-  chooseTargetForCard(state, playerId, cardId) {
-    const others = aliveOthers(state, playerId);
-    if (others.length === 0) return -1;
-
-    if (cardId === 'haunted_barn') {
-      // Smallest hand = most likely to trigger
-      return others.reduce((a, b) => a.hand.length < b.hand.length ? a : b).id;
-    }
-    if (cardId === 'identity_theft') {
-      // Highest HP = best to swap with when we're at 1
-      return others.reduce((a, b) => a.hp > b.hp ? a : b).id;
-    }
-    if (cardId === 'moonshine_night' || cardId === 'steal') {
-      // Biggest hand
-      return others.reduce((a, b) => a.hand.length > b.hand.length ? a : b).id;
-    }
-    if (cardId === 'loot_the_corpse') {
-      const dead = state.players.filter(p => p.isEliminated && p.hand.length > 0);
-      return dead.length > 0 ? dead[0].id : -1;
-    }
-    if (cardId === 'skinny_dipping' || cardId === 'blottaren') {
-      // Target leader (most info / best matchup)
-      const leader = findLeader(state, playerId);
-      return leader ? leader.id : others[0].id;
-    }
-
-    // Default: leader
-    const leader = findLeader(state, playerId);
-    return leader ? leader.id : others[0].id;
-  },
-
-  chooseCardsToDiscard(state, playerId, count) {
-    const hand = [...getPlayer(state, playerId).hand];
-    // Value ranking (higher = keep)
-    const value: Record<string, number> = {
-      god_mode: 100, insurance: 95, c4_goat: 80, silvertejp: 70,
-      stop_it: 65, milking_cow: 55, redirect: 50, wrong_goat: 45,
-      adrenaline: 40, oppenheimer: 38, senile_grandma: 36,
-      polacken: 30, steal: 28, identity_theft: 25, the_sacrifice: 22,
-      begger: 20, moonshine_night: 18, loot_the_corpse: 15,
-      haunted_barn: 12, skinny_dipping: 10, blottaren: 8, unicorn: 6,
-    };
-    hand.sort((a, b) => (value[a] ?? 5) - (value[b] ?? 5));
-    return hand.slice(0, count);
-  },
-};
-
 // ─── STRATEGY MAP ───────────────────────────────────────────
 
 const STRATEGIES: Record<Strategy, StrategyFunctions> = {
+  expert,
   aggressive,
   defensive,
-  balanced,
   random: randomStrategy,
-  expert,
 };
 
 /** Get strategy functions for a given strategy type */

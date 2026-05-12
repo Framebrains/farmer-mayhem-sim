@@ -6,11 +6,10 @@ import { CARD_DATABASE } from '@/lib/cardDatabase';
 import CardPill, { CardPillList } from '@/components/ui/CardPill';
 
 const STRATEGY_LABELS: Record<string, string> = {
-  expert: 'Expert',
-  aggressive: 'Aggressiv',
-  defensive: 'Defensiv',
-  balanced: 'Balanserad',
-  random: 'Slumpmässig',
+  expert: 'Smart',
+  aggressive: 'Smart-Aggressiv',
+  defensive: 'Smart-Defensiv',
+  random: 'Naiv',
 };
 
 function cardName(cardId: string): string {

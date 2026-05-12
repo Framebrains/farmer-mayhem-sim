@@ -8,10 +8,10 @@ import {
 } from 'recharts';
 
 const STRATEGY_LABELS: Record<string, string> = {
-  aggressive: 'Aggressiv',
-  defensive: 'Defensiv',
-  balanced: 'Balanserad',
-  random: 'Slumpmässig',
+  expert: 'Smart',
+  aggressive: 'Smart-Aggressiv',
+  defensive: 'Smart-Defensiv',
+  random: 'Naiv',
 };
 
 export default function OverviewTab({ stats }: { stats: SimulationStats }) {

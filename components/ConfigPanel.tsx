@@ -12,13 +12,20 @@ interface ConfigPanelProps {
   progress: number;
 }
 
-const STRATEGY_OPTIONS: Strategy[] = ['expert', 'aggressive', 'defensive', 'balanced', 'random'];
+const STRATEGY_OPTIONS: Strategy[] = ['expert', 'aggressive', 'defensive', 'random'];
 const STRATEGY_LABELS: Record<Strategy, string> = {
-  expert: '🧠 Expert',
-  aggressive: 'Aggressiv',
-  defensive: 'Defensiv',
-  balanced: 'Balanserad',
-  random: 'Slumpmässig',
+  expert: '🧠 Smart',
+  aggressive: '⚔️ Aggressiv',
+  defensive: '🛡️ Defensiv',
+  random: '🎲 Naiv',
+};
+
+/** Short description of each strategy — shown below the player's selected style. */
+const STRATEGY_DESCRIPTIONS: Record<Strategy, string> = {
+  expert: 'Realistisk standardspelare. Sparar God Mode för riktiga hot, attackerar ledaren, väger risk/belöning på The Sacrifice och spelar resurser i tempo (max 2 specialkort/tur).',
+  aggressive: 'Samma smarta hjärna men attackerar OFTARE (även vid 1 HP), jagar lågHP-mål för kill shots, använder defensiva kort mer frikostigt, spelar The Sacrifice mer gärna. Upp till 3 specialkort/tur.',
+  defensive: 'Samma smarta hjärna men attackerar BARA vid full HP, sparar God Mode mycket längre, placerar Senile Grandma proaktivt, undviker mål med Grandma och spelar aldrig The Sacrifice utom i panik.',
+  random: 'Slumpmässiga val utan strategi. Baseline-kontroll för att jämföra hur smart spel skiljer sig från slumpmässigt.',
 };
 
 const PLAYER_COUNTS = [2, 3, 4, 5, 6];
@@ -53,7 +60,8 @@ export default function ConfigPanel({ config, onChange, onRun, isRunning, progre
   const [showDeckModal, setShowDeckModal] = useState(false);
 
   function setPlayerCount(n: number) {
-    const strategies = Array.from({ length: n }, (_, i) => config.strategies[i] || 'balanced');
+    // New players default to the smart 'expert' brain
+    const strategies = Array.from({ length: n }, (_, i) => config.strategies[i] || 'expert');
     onChange({ ...config, playerCount: n, strategies });
   }
 
@@ -113,27 +121,35 @@ export default function ConfigPanel({ config, onChange, onRun, isRunning, progre
       {/* Strategies per player */}
       <div>
         <p className="text-sm font-medium text-zinc-400 mb-2">Strategi per spelare</p>
-        <div className="space-y-2">
-          {Array.from({ length: config.playerCount }, (_, i) => (
-            <div key={i} className="flex items-center gap-3">
-              <span className="text-zinc-400 text-sm w-20">Spelare {i + 1}</span>
-              <div className="flex gap-2 flex-wrap">
-                {STRATEGY_OPTIONS.map(s => (
-                  <button
-                    key={s}
-                    onClick={() => setStrategy(i, s)}
-                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                      config.strategies[i] === s
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
-                    }`}
-                  >
-                    {STRATEGY_LABELS[s]}
-                  </button>
-                ))}
+        <div className="space-y-3">
+          {Array.from({ length: config.playerCount }, (_, i) => {
+            const selected = config.strategies[i] ?? 'expert';
+            return (
+              <div key={i} className="bg-zinc-800/40 border border-zinc-700/60 rounded-lg p-3 space-y-2">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="text-zinc-300 text-sm font-semibold w-20">Spelare {i + 1}</span>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {STRATEGY_OPTIONS.map(s => (
+                      <button
+                        key={s}
+                        onClick={() => setStrategy(i, s)}
+                        className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors whitespace-nowrap ${
+                          selected === s
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+                        }`}
+                      >
+                        {STRATEGY_LABELS[s]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[11px] text-zinc-400 leading-relaxed pl-1 border-l-2 border-indigo-700/60 ml-1 pl-2">
+                  {STRATEGY_DESCRIPTIONS[selected]}
+                </p>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 

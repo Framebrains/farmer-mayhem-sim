@@ -48,10 +48,10 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
 
   // ── Wins by strategy ─────────────────────────────────────
   const winsByStrategy: Record<Strategy, number> = {
-    aggressive: 0, defensive: 0, balanced: 0, random: 0, expert: 0,
+    aggressive: 0, defensive: 0, random: 0, expert: 0,
   };
   const strategyGameSlots: Record<Strategy, number> = {
-    aggressive: 0, defensive: 0, balanced: 0, random: 0, expert: 0,
+    aggressive: 0, defensive: 0, random: 0, expert: 0,
   };
 
   results.forEach(r => {
@@ -63,9 +63,9 @@ export function aggregateResults(results: SingleGameResult[], config: SimConfig)
   });
 
   const winRateByStrategy: Record<Strategy, number> = {
-    aggressive: 0, defensive: 0, balanced: 0, random: 0, expert: 0,
+    aggressive: 0, defensive: 0, random: 0, expert: 0,
   };
-  for (const s of ['aggressive', 'defensive', 'balanced', 'random', 'expert'] as Strategy[]) {
+  for (const s of ['aggressive', 'defensive', 'random', 'expert'] as Strategy[]) {
     const gamesAsPlayer = strategyGameSlots[s] / config.playerCount;
     winRateByStrategy[s] = gamesAsPlayer > 0 ? winsByStrategy[s] / gamesAsPlayer : 0;
   }

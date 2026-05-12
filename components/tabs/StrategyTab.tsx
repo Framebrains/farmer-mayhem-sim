@@ -4,31 +4,28 @@ import { SimulationStats, Strategy } from '@/lib/types';
 import { wilsonInterval } from '@/lib/confidence';
 
 const STRATEGY_LABELS: Record<Strategy, string> = {
-  expert: 'Expert',
-  aggressive: 'Aggressiv',
-  defensive: 'Defensiv',
-  balanced: 'Balanserad',
-  random: 'Slumpmässig',
+  expert: 'Smart',
+  aggressive: 'Smart – Aggressiv',
+  defensive: 'Smart – Defensiv',
+  random: 'Naiv',
 };
 
 const STRATEGY_DESCRIPTIONS: Record<Strategy, string> = {
-  expert: 'Hothantering, resurssparande, komboinriktad',
-  aggressive: 'Attackerar alltid, väljer svagaste mål',
-  defensive: 'Sparar kort, attackerar bara när full HP',
-  balanced: 'Blandad — attackerar ledaren, måttlig kortanvändning',
-  random: 'Slumpmässiga val',
+  expert: 'Den realistiska standardspelaren — väger risk/belöning, sparar resurser',
+  aggressive: 'Smart hjärna + offensiv stil — attackerar oftare, jagar killshots',
+  defensive: 'Smart hjärna + defensiv stil — attackerar bara från säker position',
+  random: 'Slumpmässiga val (baseline-kontroll)',
 };
 
 const STRATEGY_ICONS: Record<Strategy, string> = {
   expert: '🧠',
   aggressive: '⚔️',
   defensive: '🛡️',
-  balanced: '⚖️',
   random: '🎲',
 };
 
 export default function StrategyTab({ stats }: { stats: SimulationStats }) {
-  const strategies = ['expert', 'aggressive', 'defensive', 'balanced', 'random'] as Strategy[];
+  const strategies = ['expert', 'aggressive', 'defensive', 'random'] as Strategy[];
   const expected = 1 / stats.playerCount;
 
   // Compute per-strategy CIs and rank

@@ -9,6 +9,7 @@ import Dashboard from '@/components/Dashboard';
 const DEFAULT_CONFIG: SimConfig = {
   playerCount: 3,
   numSimulations: 1000,
+  // All players default to the smart "expert" brain — realistic baseline.
   strategies: ['expert', 'expert', 'expert'],
   deckConfig: { overrides: {} },
 };

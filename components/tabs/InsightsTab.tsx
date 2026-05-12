@@ -142,7 +142,7 @@ function generateInsights(stats: SimulationStats): Insight[] {
   }
 
   // ── Strategibalans ───────────────────────────────────────
-  const strategies = ['expert', 'aggressive', 'defensive', 'balanced', 'random'] as const;
+  const strategies = ['expert', 'aggressive', 'defensive', 'random'] as const;
   const activeStrategies = strategies.filter(s => stats.winsByStrategy[s] > 0);
   if (activeStrategies.length > 1) {
     const rates = activeStrategies.map(s => stats.winRateByStrategy[s]);
@@ -150,7 +150,7 @@ function generateInsights(stats: SimulationStats): Insight[] {
     const minRate = Math.min(...rates);
     const spread = maxRate - minRate;
     const dominantStrategy = activeStrategies[rates.indexOf(maxRate)];
-    const stratLabels: Record<string, string> = { expert: 'Expert', aggressive: 'Aggressiv', defensive: 'Defensiv', balanced: 'Balanserad', random: 'Slumpmässig' };
+    const stratLabels: Record<string, string> = { expert: 'Smart', aggressive: 'Smart – Aggressiv', defensive: 'Smart – Defensiv', random: 'Naiv' };
     if (spread > 0.2) {
       insights.push({
         icon: '🎯',
