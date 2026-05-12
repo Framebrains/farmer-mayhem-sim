@@ -575,22 +575,32 @@ const expert: StrategyFunctions = {
 
     const player = getPlayer(state, playerId);
     const target = getPlayer(state, targetTurnPlayerId);
-    const leader = findLeader(state, playerId);
 
-    // Only stop the LEADER (don't waste on weak players)
-    if (!leader || leader.id !== target.id) return false;
+    // Stop It is a panic button — only used when:
+    //   (a) I CANNOT survive an incoming hit (1 HP + no other defenses), OR
+    //   (b) Target has Oppenheimer AND I have C4s worth protecting.
+    //
+    // Critically: NEVER played at 2 HP "just in case" or on opening turns.
+    // It's strictly a last resort.
 
-    // Stop if leader has Oppenheimer (massive board disruption)
-    if (target.hand.includes('oppenheimer')) return true;
+    const targetHasAttack = target.hand.some(c => CARD_DATABASE[c]?.type === 'attack');
 
-    // Stop if I'm at 1 HP AND leader has an attack ready
-    const leaderHasAttack = target.hand.some(c => CARD_DATABASE[c]?.type === 'attack');
-    if (player.hp === 1 && leaderHasAttack && !player.hand.includes('god_mode')) {
-      return true;
+    // (a) Survival case: 1 HP, target can attack, no other defense available
+    if (player.hp === 1 && targetHasAttack) {
+      const hasOtherDefense =
+        player.hand.includes('god_mode') ||
+        player.hand.includes('redirect') ||
+        player.hand.includes('wrong_goat') ||
+        player.hand.includes('insurance') ||
+        player.stationaryCards.some(s => s.cardId === 'senile_grandma');
+      if (!hasOtherDefense) return true;
     }
 
-    // Endgame: stop the opponent every turn
-    if (alivePlayers(state).length === 2 && leaderHasAttack) return true;
+    // (b) Oppenheimer disruption case: target is about to wipe my C4 stockpile
+    if (target.hand.includes('oppenheimer') &&
+        player.hand.filter(c => c === 'c4_goat').length >= 2) {
+      return true;
+    }
 
     return false;
   },
