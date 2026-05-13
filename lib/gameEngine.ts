@@ -396,31 +396,31 @@ function resolveAttackChain(state: GameState): GameState {
       const currentAttack = state.pendingAttack;
       const strategy = getStrategy(reactor.strategy);
 
-      // ── Step A: Current target can redirect (Redirect / Wrong Goat) ──
-      if (currentAttack.targetId === reactor.id) {
-        const redirect = strategy.shouldRedirect(state, reactor.id, currentAttack);
-        if (redirect.play && redirect.newTargetId >= 0) {
-          const prevTarget = currentAttack.targetId;
-          state = applyRedirect(state, reactor.id, redirect.newTargetId);
-          // Tag the new chain event with the previous target for potential revert
-          if (state.pendingAttack && state.pendingAttack.chainHistory.length > 0) {
-            const last = state.pendingAttack.chainHistory[state.pendingAttack.chainHistory.length - 1];
-            last.previousTargetId = prevTarget;
-          }
-          anyReaction = true;
-          break;
+      // ── Step A: ANY player can play Re-direct or Wrong Goat ──
+      // Per game rules, these are not target-only — a bystander can
+      // redirect P1's attack on P2 onto P3 (or back at P1). The strategy
+      // itself decides whether and when to play these from a given seat.
+      const redirect = strategy.shouldRedirect(state, reactor.id, currentAttack);
+      if (redirect.play && redirect.newTargetId >= 0) {
+        const prevTarget = currentAttack.targetId;
+        state = applyRedirect(state, reactor.id, redirect.newTargetId);
+        if (state.pendingAttack && state.pendingAttack.chainHistory.length > 0) {
+          const last = state.pendingAttack.chainHistory[state.pendingAttack.chainHistory.length - 1];
+          last.previousTargetId = prevTarget;
         }
+        anyReaction = true;
+        break;
+      }
 
-        if (strategy.shouldPlayWrongGoat(state, reactor.id, currentAttack)) {
-          const prevTarget = currentAttack.targetId;
-          state = applyWrongGoat(state, reactor.id, currentAttack.attackerId, currentAttack.targetId);
-          if (state.pendingAttack && state.pendingAttack.chainHistory.length > 0) {
-            const last = state.pendingAttack.chainHistory[state.pendingAttack.chainHistory.length - 1];
-            last.previousTargetId = prevTarget;
-          }
-          anyReaction = true;
-          break;
+      if (strategy.shouldPlayWrongGoat(state, reactor.id, currentAttack)) {
+        const prevTarget = currentAttack.targetId;
+        state = applyWrongGoat(state, reactor.id, currentAttack.attackerId, currentAttack.targetId);
+        if (state.pendingAttack && state.pendingAttack.chainHistory.length > 0) {
+          const last = state.pendingAttack.chainHistory[state.pendingAttack.chainHistory.length - 1];
+          last.previousTargetId = prevTarget;
         }
+        anyReaction = true;
+        break;
       }
 
       // ── Step B: Any player can God Mode ──

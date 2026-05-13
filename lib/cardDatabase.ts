@@ -39,12 +39,12 @@ export const CARD_DATABASE: Record<string, CardDefinition> = {
   wrong_goat: {
     id: 'wrong_goat', name: 'Wrong Goat', type: 'specialty',
     timing: 'any_time', count: 3, canBeNopedByGodMode: true,
-    description: 'Reaktivt (bara om du är mål). Omdirigerar attacken till spelaren med FLEST kort på handen (exkl. angriparen).',
+    description: 'Reaktivt. Kan spelas av VEM SOM HELST (inte bara målet). Omdirigerar attacken till spelaren med FLEST kort på handen (exkl. angriparen och nuvarande mål).',
   },
   redirect: {
     id: 'redirect', name: 'Re-direct', type: 'specialty',
     timing: 'any_time', count: 3, canBeNopedByGodMode: true,
-    description: 'Reaktivt (bara om du är mål). Omdirigerar attacken till en valfri annan spelare.',
+    description: 'Reaktivt. Kan spelas av VEM SOM HELST (inte bara målet). Omdirigerar attacken till en valfri annan spelare — t.ex. tillbaka på angriparen.',
   },
   adrenaline: {
     id: 'adrenaline', name: 'Adrenaline', type: 'specialty',
@@ -101,7 +101,7 @@ export const CARD_DATABASE: Record<string, CardDefinition> = {
   loot_the_corpse: {
     id: 'loot_the_corpse', name: 'Loot the Corpse', type: 'specialty',
     timing: 'own_turn', count: 1, canBeNopedByGodMode: true,
-    description: 'Ta ALLA kort från en eliminerad spelares hand. Bara om någon redan är ute med kort kvar.',
+    description: 'Ta ALLA kort från en eliminerad spelares hand. Bara om någon redan är ute med kort kvar. OBS: kan inte användas i 2-spelarspel eftersom spelet är slut så fort en spelare elimineras.',
   },
   polacken: {
     id: 'polacken', name: 'Polacken', type: 'specialty',

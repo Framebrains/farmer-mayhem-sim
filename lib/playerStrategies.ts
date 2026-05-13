@@ -209,26 +209,80 @@ const expert: StrategyFunctions = {
 
   shouldRedirect(state, playerId, attack) {
     if (!hasCard(state, playerId, 'redirect')) return { play: false, newTargetId: -1 };
-    if (attack.targetId !== playerId) return { play: false, newTargetId: -1 };
+    // ANY player can play Re-direct (rule clarification) — including bystanders.
+    // The attacker would never redirect their own attack though.
+    if (attack.attackerId === playerId) return { play: false, newTargetId: -1 };
 
     const player = getPlayer(state, playerId);
+    const isTarget = attack.targetId === playerId;
     const hitProb = hitChance(attack.attackCardId);
 
-    if (player.hp === 1 || hitProb >= 0.4) {
-      const others = aliveOthers(state, playerId).filter(p => p.id !== attack.attackerId);
-      if (others.length === 0) return { play: false, newTargetId: -1 };
-      others.sort((a, b) => threatScore(b) - threatScore(a));
-      return { play: true, newTargetId: others[0].id };
+    // CASE A — I'm the target: defensive use
+    if (isTarget) {
+      if (player.hp === 1 || hitProb >= 0.4) {
+        const others = state.players.filter(p =>
+          !p.isEliminated && p.id !== playerId && p.id !== attack.attackerId
+        );
+        if (others.length === 0) return { play: false, newTargetId: -1 };
+        others.sort((a, b) => threatScore(b) - threatScore(a));
+        return { play: true, newTargetId: others[0].id };
+      }
+      return { play: false, newTargetId: -1 };
+    }
+
+    // CASE B — I'm a bystander: kingmaker use
+    // Only redirect if it shifts the attack onto a player who is a BIGGER threat
+    // than the current target. Don't waste a card on a wash.
+    if (hitProb >= 0.5) {
+      const currentTarget = state.players.find(p => p.id === attack.targetId);
+      if (!currentTarget) return { play: false, newTargetId: -1 };
+      // Candidates: anyone alive (including attacker — sometimes attacker IS leader)
+      // but NOT me (no self-target) and NOT the current target (no-op).
+      const candidates = state.players.filter(p =>
+        !p.isEliminated && p.id !== playerId && p.id !== attack.targetId
+      );
+      if (candidates.length === 0) return { play: false, newTargetId: -1 };
+      candidates.sort((a, b) => threatScore(b) - threatScore(a));
+      const newTarget = candidates[0];
+      // Require a meaningful threat gap so we don't burn a card for marginal gain
+      if (threatScore(newTarget) > threatScore(currentTarget) + 5) {
+        return { play: true, newTargetId: newTarget.id };
+      }
     }
     return { play: false, newTargetId: -1 };
   },
 
   shouldPlayWrongGoat(state, playerId, attack) {
     if (!hasCard(state, playerId, 'wrong_goat')) return false;
-    if (attack.targetId !== playerId) return false;
+    // ANY player can play Wrong Goat. Attacker excluded for sanity.
+    if (attack.attackerId === playerId) return false;
+
     const player = getPlayer(state, playerId);
-    if (player.hp === 1) return true;
-    if (hitChance(attack.attackCardId) >= 0.4) return true;
+    const isTarget = attack.targetId === playerId;
+    const hitProb = hitChance(attack.attackCardId);
+
+    if (isTarget) {
+      if (player.hp === 1) return true;
+      if (hitProb >= 0.4) return true;
+      return false;
+    }
+
+    // Bystander Wrong Goat: shifts attack to most-cards player among
+    // (alive \ {attacker, currentTarget}). Only worth playing if:
+    //   (a) the new target isn't ME (no self-target via Wrong Goat)
+    //   (b) the new target is the leader (or close to it)
+    const candidates = state.players.filter(p =>
+      !p.isEliminated && p.id !== attack.attackerId && p.id !== attack.targetId
+    );
+    if (candidates.length === 0) return false;
+    const maxCards = Math.max(...candidates.map(p => p.hand.length));
+    const newTarget = candidates.find(p => p.hand.length === maxCards);
+    if (!newTarget || newTarget.id === playerId) return false;
+    // Only play it from the sidelines if the auto-target is a serious threat
+    if (hitProb >= 0.5) {
+      const leader = findLeader(state, playerId);
+      if (leader && newTarget.id === leader.id) return true;
+    }
     return false;
   },
 
@@ -426,24 +480,64 @@ const aggressive: StrategyFunctions = {
 
   shouldRedirect(state, playerId, attack) {
     if (!hasCard(state, playerId, 'redirect')) return { play: false, newTargetId: -1 };
-    if (attack.targetId !== playerId) return { play: false, newTargetId: -1 };
+    if (attack.attackerId === playerId) return { play: false, newTargetId: -1 };
 
     const player = getPlayer(state, playerId);
-    // Aggressive: redirect any meaningful threat (≥30% hit chance) and aim at the killable
-    if (player.hp === 1 || hitChance(attack.attackCardId) >= 0.3) {
-      const others = aliveOthers(state, playerId).filter(p => p.id !== attack.attackerId);
-      if (others.length === 0) return { play: false, newTargetId: -1 };
-      // Prefer lowest HP target (potential kill shot)
-      others.sort((a, b) => a.hp - b.hp);
-      return { play: true, newTargetId: others[0].id };
+    const isTarget = attack.targetId === playerId;
+    const hitProb = hitChance(attack.attackCardId);
+
+    if (isTarget) {
+      // Aggressive: redirect any meaningful threat, kill-shot the lowest HP target
+      if (player.hp === 1 || hitProb >= 0.3) {
+        const others = state.players.filter(p =>
+          !p.isEliminated && p.id !== playerId && p.id !== attack.attackerId
+        );
+        if (others.length === 0) return { play: false, newTargetId: -1 };
+        others.sort((a, b) => a.hp - b.hp);
+        return { play: true, newTargetId: others[0].id };
+      }
+      return { play: false, newTargetId: -1 };
+    }
+
+    // Bystander aggressive — willing to redirect lower-threshold attacks
+    // onto the lowest-HP enemy (set up a kill).
+    if (hitProb >= 0.4) {
+      const candidates = state.players.filter(p =>
+        !p.isEliminated && p.id !== playerId && p.id !== attack.targetId
+      );
+      if (candidates.length === 0) return { play: false, newTargetId: -1 };
+      candidates.sort((a, b) => a.hp - b.hp);
+      const candidate = candidates[0];
+      // Only worth it if the new target is at 1 HP (kill chance)
+      if (candidate.hp === 1) {
+        return { play: true, newTargetId: candidate.id };
+      }
     }
     return { play: false, newTargetId: -1 };
   },
 
   shouldPlayWrongGoat(state, playerId, attack) {
     if (!hasCard(state, playerId, 'wrong_goat')) return false;
-    if (attack.targetId !== playerId) return false;
-    return hitChance(attack.attackCardId) >= 0.3 || getPlayer(state, playerId).hp === 1;
+    if (attack.attackerId === playerId) return false;
+
+    const player = getPlayer(state, playerId);
+    const isTarget = attack.targetId === playerId;
+    const hitProb = hitChance(attack.attackCardId);
+
+    if (isTarget) {
+      return hitProb >= 0.3 || player.hp === 1;
+    }
+
+    // Aggressive bystander — fire Wrong Goat if it shifts the attack onto
+    // an enemy who isn't me and is killable
+    const candidates = state.players.filter(p =>
+      !p.isEliminated && p.id !== attack.attackerId && p.id !== attack.targetId
+    );
+    if (candidates.length === 0) return false;
+    const maxCards = Math.max(...candidates.map(p => p.hand.length));
+    const newTarget = candidates.find(p => p.hand.length === maxCards);
+    if (!newTarget || newTarget.id === playerId) return false;
+    return hitProb >= 0.4 && newTarget.hp <= 2;
   },
 
   shouldPlayAdrenaline(state, playerId, attack, diceResult) {
@@ -585,27 +679,43 @@ const defensive: StrategyFunctions = {
 
   shouldRedirect(state, playerId, attack) {
     if (!hasCard(state, playerId, 'redirect')) return { play: false, newTargetId: -1 };
-    if (attack.targetId !== playerId) return { play: false, newTargetId: -1 };
+    if (attack.attackerId === playerId) return { play: false, newTargetId: -1 };
 
     const player = getPlayer(state, playerId);
+    const isTarget = attack.targetId === playerId;
     const hitProb = hitChance(attack.attackCardId);
 
-    // Defensive: slightly higher threshold (≥50%) to save Redirect for real threats
-    if (player.hp === 1 || hitProb >= 0.5) {
-      const others = aliveOthers(state, playerId).filter(p => p.id !== attack.attackerId);
-      if (others.length === 0) return { play: false, newTargetId: -1 };
-      others.sort((a, b) => threatScore(b) - threatScore(a));
-      return { play: true, newTargetId: others[0].id };
+    if (isTarget) {
+      // Defensive: tighter threshold (≥50%) to save Redirect for real threats
+      if (player.hp === 1 || hitProb >= 0.5) {
+        const others = state.players.filter(p =>
+          !p.isEliminated && p.id !== playerId && p.id !== attack.attackerId
+        );
+        if (others.length === 0) return { play: false, newTargetId: -1 };
+        others.sort((a, b) => threatScore(b) - threatScore(a));
+        return { play: true, newTargetId: others[0].id };
+      }
+      return { play: false, newTargetId: -1 };
     }
+
+    // Defensive almost never plays Redirect as a bystander — saves it for own
+    // emergencies. Only exception: someone is one shot from killing the leader
+    // and we'd benefit from accelerating it.
     return { play: false, newTargetId: -1 };
   },
 
   shouldPlayWrongGoat(state, playerId, attack) {
     if (!hasCard(state, playerId, 'wrong_goat')) return false;
-    if (attack.targetId !== playerId) return false;
+    if (attack.attackerId === playerId) return false;
+
     const player = getPlayer(state, playerId);
-    if (player.hp === 1) return true;
-    return hitChance(attack.attackCardId) >= 0.5; // tighter than expert's 0.4
+    const isTarget = attack.targetId === playerId;
+    if (isTarget) {
+      if (player.hp === 1) return true;
+      return hitChance(attack.attackCardId) >= 0.5;
+    }
+    // Defensive saves reactive cards — doesn't play Wrong Goat as bystander.
+    return false;
   },
 
   shouldPlayAdrenaline(state, playerId, attack, diceResult) {

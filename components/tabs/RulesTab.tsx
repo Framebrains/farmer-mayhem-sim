@@ -144,14 +144,14 @@ const SECTIONS: RuleSection[] = [
       {
         id: 'react_wronggoat',
         title: 'Wrong Goat (×3)',
-        simBehavior: 'Kan bara spelas av den som attackeras. Omdirigerar attacken till spelaren med flest kort på hand (exkl. angriparen och nuvarande mål).',
-        assumption: 'Vid lika väljs spelaren med lägst ID. Wrong Goat räknas som en redirect-händelse i kedjan.',
+        simBehavior: 'Kan spelas av VEM SOM HELST under en aktiv attack — inte bara målet. Omdirigerar attacken till spelaren med flest kort på hand (exkl. angriparen och nuvarande mål).',
+        assumption: 'Vid lika väljs spelaren med lägst ID. Wrong Goat räknas som en redirect-händelse i kedjan. Smart AI som åskådare spelar Wrong Goat när det skiftar attacken till ledaren.',
       },
       {
         id: 'react_redirect',
         title: 'Re-direct (×3)',
-        simBehavior: 'Kan bara spelas av den som attackeras. Omdirigerar attacken till valfri annan spelare (vald av strategi).',
-        assumption: 'Aggressiv/defensiv strategi väljer ny måltavla baserat på HP/hand. Max 6 omdirigeringar per attack.',
+        simBehavior: 'Kan spelas av VEM SOM HELST under en aktiv attack. Omdirigerar attacken till valfri annan spelare (inkl. tillbaka på angriparen).',
+        assumption: 'Smart AI som åskådare spelar Re-direct när det flyttar attacken till en BETYDLIGT större hot än nuvarande mål.',
       },
       {
         id: 'react_adrenaline',
@@ -225,7 +225,7 @@ const SECTIONS: RuleSection[] = [
         id: 'spec_loot',
         title: 'Loot the Corpse (×1)',
         simBehavior: 'Tar alla kort från en eliminerad spelares hand.',
-        assumption: 'Kan bara spelas om det finns en eliminerad spelare med kort kvar.',
+        assumption: 'Kan bara spelas om det finns en eliminerad spelare med kort kvar. KAN INTE ANVÄNDAS i 2-spelarspel — spelet är slut så fort en spelare elimineras.',
       },
       {
         id: 'spec_silvertejp',
