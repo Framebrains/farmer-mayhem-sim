@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { SimulationStats } from '@/lib/types';
 import OverviewTab from '@/components/tabs/OverviewTab';
-import CardPowerTab from '@/components/tabs/CardPowerTab';
 import StrategyTab from '@/components/tabs/StrategyTab';
 import PlayerCountTab from '@/components/tabs/PlayerCountTab';
 import RedFlagsTab from '@/components/tabs/RedFlagsTab';
@@ -13,17 +12,19 @@ import RulesTab from '@/components/tabs/RulesTab';
 import DecisivePlaysTab from '@/components/tabs/DecisivePlaysTab';
 import SynergiesTab from '@/components/tabs/SynergiesTab';
 
-type TabId = 'overview' | 'cards' | 'decisive' | 'synergies' | 'strategy' | 'playercount' | 'redflags' | 'insights' | 'gamelog' | 'rules';
+// Removed 'cards' (Kortstyrka) — naive winRate-per-card view was misleading
+// because of selection bias on cards like Loot the Corpse and Insurance.
+// The Avgörande drag, Kombinationer and Insikter tabs cover the real signal.
+type TabId = 'overview' | 'insights' | 'decisive' | 'synergies' | 'strategy' | 'playercount' | 'redflags' | 'gamelog' | 'rules';
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'overview', label: 'Översikt' },
-  { id: 'cards', label: 'Kortstyrka' },
+  { id: 'insights', label: '🤖 Insikter' },
   { id: 'decisive', label: '🎯 Avgörande drag' },
   { id: 'synergies', label: '🔗 Kombinationer' },
   { id: 'strategy', label: 'Strategianalys' },
   { id: 'playercount', label: 'Spelarantal' },
   { id: 'redflags', label: 'Röda flaggor' },
-  { id: 'insights', label: 'Insikter' },
   { id: 'gamelog', label: 'Spellog' },
   { id: 'rules', label: '📋 Regelverifiering' },
 ];
@@ -74,7 +75,6 @@ export default function Dashboard({ stats }: DashboardProps) {
       {/* Tab content */}
       <div className="p-5 md:p-6">
         {activeTab === 'overview' && <OverviewTab stats={stats} />}
-        {activeTab === 'cards' && <CardPowerTab stats={stats} />}
         {activeTab === 'decisive' && <DecisivePlaysTab stats={stats} />}
         {activeTab === 'synergies' && <SynergiesTab stats={stats} />}
         {activeTab === 'strategy' && <StrategyTab stats={stats} />}
