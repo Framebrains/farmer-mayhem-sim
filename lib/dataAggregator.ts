@@ -19,6 +19,7 @@ const PLAY_EVENT_TYPES = new Set([
   'insurance_triggered',  // insurance auto-triggered
   'sacrifice_wheel_spun', // the_sacrifice played
   'haunted_barn_triggered',
+  'robber_triggered',     // Rövaren drawn (house-card trap)
 ]);
 
 /** Aggregate raw game results into simulation statistics */

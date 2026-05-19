@@ -6,7 +6,7 @@ import {
   applyAdrenaline, applyIdentityTheft, applyBlottaren, applySkinnyDipping,
   applyTheSacrifice, applyOppenheimer, applyBegger, applySteal, applySilvertejp,
   applyMoonshineNight, applyLootTheCorpse, applyPolacken, applyMadCow,
-  applySenileGrandma, applyHauntedBarn, checkHauntedBarnTrigger, applyDamage,
+  applyRobber, applySenileGrandma, applyHauntedBarn, checkHauntedBarnTrigger, applyDamage,
   applyCustomSpecialtyCard,
 } from './cardEffects';
 
@@ -558,6 +558,10 @@ function drawPhase(state: GameState, playerId: number): GameState {
     };
     state = applyMadCow(state, playerId);
     state = { ...state, discardPile: [...state.discardPile, 'mad_cow'] };
+  } else if (card === 'robber') {
+    // Rövaren is a trap like Mad Cow: triggers on draw, never enters hand.
+    state = applyRobber(state, playerId);
+    state = { ...state, discardPile: [...state.discardPile, 'robber'] };
   } else {
     state = {
       ...state,

@@ -227,6 +227,12 @@ export default function ConfigPanel({ config, onChange, onRun, isRunning, progre
         </div>
       </div>
 
+      {/* House rules — quick toggles for opt-in house cards */}
+      <div>
+        <p className="text-sm font-medium text-zinc-400 mb-2">Husekort (av som standard)</p>
+        <RobberToggle config={config} onChange={onChange} />
+      </div>
+
       {/* Deck configuration — compact summary + open fullscreen button */}
       <div>
         <div className="flex items-center justify-between mb-2">
@@ -797,6 +803,77 @@ function EffectRow({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Rövaren on/off toggle ───────────────────────────────────────────────
+// Opt-in house card. Default count in the database is 0 (off); clicking ON
+// pushes a deck override of N copies. The +/- controls in the deck editor
+// can fine-tune the count after enabling.
+
+const ROBBER_DEFAULT_COUNT = 3;
+
+function RobberToggle({
+  config,
+  onChange,
+}: {
+  config: SimConfig;
+  onChange: (config: SimConfig) => void;
+}) {
+  const current = config.deckConfig.overrides['robber'] ?? 0;
+  const on = current > 0;
+
+  function setRobberCount(n: number) {
+    const overrides = { ...config.deckConfig.overrides };
+    if (n === 0) {
+      delete overrides['robber'];
+    } else {
+      overrides['robber'] = n;
+    }
+    onChange({ ...config, deckConfig: { overrides } });
+  }
+
+  function toggle() {
+    setRobberCount(on ? 0 : ROBBER_DEFAULT_COUNT);
+  }
+
+  return (
+    <div className="bg-zinc-800/60 border border-amber-700/40 rounded-lg p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-amber-200">🥷 Rövaren</p>
+          <p className="text-[11px] text-zinc-400 leading-relaxed mt-0.5">
+            Trapp som triggar direkt vid dragning. Spelaren till höger drar
+            slumpmässigt 50% av din hand (avrundat uppåt) och kastar dem.
+          </p>
+        </div>
+        <button
+          onClick={toggle}
+          className={`flex-shrink-0 text-xs font-bold px-3 py-1.5 rounded-full transition-colors whitespace-nowrap ${
+            on
+              ? 'bg-emerald-600 text-white shadow-md'
+              : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+          }`}
+        >
+          {on ? `🟢 PÅ (${current})` : '⚫ AV'}
+        </button>
+      </div>
+      {on && (
+        <div className="flex items-center gap-2 mt-2 pt-2 border-t border-zinc-700/60">
+          <span className="text-[11px] text-zinc-500">Antal i leken:</span>
+          <button
+            onClick={() => setRobberCount(Math.max(1, current - 1))}
+            className="w-6 h-6 bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-200 text-sm font-bold"
+          >−</button>
+          <span className="w-6 text-center text-white text-sm font-mono font-bold">{current}</span>
+          <button
+            onClick={() => setRobberCount(Math.min(15, current + 1))}
+            className="w-6 h-6 bg-zinc-700 hover:bg-zinc-600 rounded text-zinc-200 text-sm font-bold"
+          >+</button>
+          <span className="text-[10px] text-zinc-500 ml-2">(testa olika antal för att se effekten)</span>
+        </div>
+      )}
     </div>
   );
 }

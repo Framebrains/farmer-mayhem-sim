@@ -57,6 +57,12 @@ function drawCards(state: GameState, playerId: number, count: number): { state: 
       // If the Mad Cow eliminated the drawing player or ended the game, stop.
       const stillAlive = state.players.find(p => p.id === playerId && !p.isEliminated);
       if (!stillAlive || state.isOver) break;
+    } else if (card === 'robber') {
+      // Rövaren trap → triggers regardless of how it was drawn.
+      state = applyRobber(state, playerId);
+      state = { ...state, discardPile: [...state.discardPile, 'robber'] };
+      const stillAlive = state.players.find(p => p.id === playerId && !p.isEliminated);
+      if (!stillAlive || state.isOver) break;
     } else {
       drawn.push(card);
       state = {
@@ -732,6 +738,64 @@ export function applyHauntedBarn(state: GameState, playerId: number, targetId: n
     stationaryCards: [...target.stationaryCards, newSlot],
   });
   state = addEvent(state, { type: 'card_played', actorId: playerId, targetId, cardId: 'haunted_barn' });
+  return state;
+}
+
+// ─── RÖVAREN (THE ROBBER) ───────────────────────────────────
+
+/**
+ * House-card trap. Triggers on draw — the player to the right (next alive
+ * clockwise) picks 50% of the drawer's hand at random (avrundat uppåt) and
+ * discards them. Since the picker can't see the cards, the pick is random.
+ */
+export function applyRobber(state: GameState, playerId: number): GameState {
+  const player = state.players.find(p => p.id === playerId)!;
+  if (player.isEliminated) return state;
+
+  const handSize = player.hand.length;
+  if (handSize === 0) {
+    state = addEvent(state, {
+      type: 'robber_triggered',
+      actorId: playerId,
+      cardId: 'robber',
+      detail: 'tom hand',
+    });
+    return state;
+  }
+
+  const discardCount = Math.ceil(handSize / 2);
+
+  // Find the player to the right (next alive clockwise)
+  const idx = state.players.findIndex(p => p.id === playerId);
+  let rightId = playerId;
+  for (let i = 1; i < state.players.length; i++) {
+    const candidate = state.players[(idx + i) % state.players.length];
+    if (!candidate.isEliminated) {
+      rightId = candidate.id;
+      break;
+    }
+  }
+
+  // Random pick (right player picks blind)
+  const shuffled = shuffleArray(player.hand);
+  const discarded = shuffled.slice(0, discardCount);
+
+  const remaining = [...player.hand];
+  for (const c of discarded) {
+    const i = remaining.indexOf(c);
+    if (i !== -1) remaining.splice(i, 1);
+  }
+
+  state = updatePlayer(state, playerId, { hand: remaining });
+  state = { ...state, discardPile: [...state.discardPile, ...discarded] };
+  state = addEvent(state, {
+    type: 'robber_triggered',
+    actorId: playerId,
+    targetId: rightId,
+    cardId: 'robber',
+    cards: discarded,
+    detail: `${discardCount}/${handSize}`,
+  });
   return state;
 }
 

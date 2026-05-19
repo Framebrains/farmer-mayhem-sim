@@ -145,6 +145,7 @@ export type GameEventType =
   | 'mad_cow_triggered'
   | 'haunted_barn_triggered'
   | 'sacrifice_wheel_spun'
+  | 'robber_triggered'
   | 'draw'
   | 'game_over';
 

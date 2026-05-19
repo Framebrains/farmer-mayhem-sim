@@ -122,6 +122,11 @@ export const CARD_DATABASE: Record<string, CardDefinition> = {
     timing: 'trap', count: 3, canBeNopedByGodMode: false,
     description: 'Trapp / huskort. Triggar DIREKT när den dras — slå tärning, ojämnt (1/3/5) = 1 HP skada. Hamnar aldrig i handen.',
   },
+  robber: {
+    id: 'robber', name: 'Rövaren', type: 'trap',
+    timing: 'trap', count: 0, canBeNopedByGodMode: false,
+    description: 'Husekort (av som standard). Triggar DIREKT när den dras — spelaren till höger drar slumpmässigt 50% av din hand (avrundat uppåt) och kastar dem. Hamnar aldrig i handen. Togglas på/av i konfigurationen.',
+  },
 
   // ─── STATIONARY CARDS ────────────────────────────────────
   senile_grandma: {

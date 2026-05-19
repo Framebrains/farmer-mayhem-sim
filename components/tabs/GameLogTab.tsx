@@ -130,6 +130,19 @@ function formatEvent(event: GameEvent, game: SingleGameResult): { text: string; 
         color: 'text-red-400',
       };
 
+    case 'robber_triggered':
+      if (event.cards && event.cards.length > 0) {
+        const rightName = event.targetId !== undefined ? pName(game, event.targetId) : '?';
+        return {
+          text: `🥷  ${actor} drog **Rövaren**! ${rightName} (höger) slänger slumpmässigt ${event.cards.length} kort: **${cardList(event.cards)}**`,
+          color: 'text-amber-400',
+        };
+      }
+      return {
+        text: `🥷  ${actor} drog **Rövaren** — inga kort på handen att slänga`,
+        color: 'text-amber-400',
+      };
+
     case 'sacrifice_wheel_spun':
       return {
         text: `🎡  ${actor} spelade **The Sacrifice** — hjulet stannade på: **${event.detail ?? '?'}**`,
